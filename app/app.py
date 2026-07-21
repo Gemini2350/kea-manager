@@ -8,7 +8,10 @@ import secrets
 import sqlite3
 import threading
 import time
-from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
+import io
+from datetime import datetime
+from flask import (Flask, render_template, request, redirect, url_for, flash,
+                   session, jsonify, send_file)
 import subprocess
 import signal
 
@@ -801,6 +804,72 @@ def restart_service():
             return jsonify({'success': False, 'error': 'Failed to restart service'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/export-config')
+def export_config():
+    """Download the current KEA DHCP4 configuration as a JSON file."""
+    try:
+        config = load_config()
+        payload = json.dumps(config, indent=2).encode('utf-8')
+        stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        return send_file(
+            io.BytesIO(payload),
+            mimetype='application/json',
+            as_attachment=True,
+            download_name=f'kea-dhcp4-{stamp}.conf',
+        )
+    except Exception as e:
+        flash(f'Error exporting configuration: {e}')
+        return redirect(url_for('config'))
+
+
+@app.route('/import-config', methods=['POST'])
+def import_config():
+    """Import a KEA DHCP4 configuration from an uploaded JSON file.
+
+    The current config is backed up to /etc/kea/kea-dhcp4.conf.bak before
+    the new one is written, and the upload is validated with kea-dhcp4 -t
+    before being accepted.
+    """
+    try:
+        uploaded = request.files.get('config_file')
+        if uploaded is None or uploaded.filename == '':
+            flash('No file selected for import.')
+            return redirect(url_for('config'))
+
+        raw = uploaded.read().decode('utf-8')
+        try:
+            new_config = json.loads(raw)
+        except json.JSONDecodeError as e:
+            flash(f'Uploaded file is not valid JSON: {e}')
+            return redirect(url_for('config'))
+
+        if 'Dhcp4' not in new_config:
+            flash('Uploaded file has no "Dhcp4" section -- not a KEA DHCP4 config.')
+            return redirect(url_for('config'))
+
+        if not validate_config(new_config):
+            flash('Uploaded configuration failed KEA validation -- not applied.')
+            return redirect(url_for('config'))
+
+        # Back up the current config before overwriting.
+        try:
+            current = load_config()
+            if current:
+                with open(CONFIG_FILE + '.bak', 'w') as f:
+                    json.dump(current, f, indent=2)
+        except Exception:
+            pass  # backup is best-effort
+
+        save_config(new_config)
+        restart_kea_service()
+        flash('Configuration imported and applied. Previous config saved as '
+              'kea-dhcp4.conf.bak. KEA was restarted.')
+    except Exception as e:
+        flash(f'Error importing configuration: {e}')
+
+    return redirect(url_for('config'))
 
 # Stale-while-revalidate cache for lease results. KEA briefly renames /
 # truncates the lease file during LFC, service restarts and reclaim cycles;

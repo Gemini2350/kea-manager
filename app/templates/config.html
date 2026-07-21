@@ -6,12 +6,21 @@
 <div class="card">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
         <h2 style="color: var(--text);">Raw KEA Configuration</h2>
-        <div>
+        <div style="display: flex; gap: 0.35rem; flex-wrap: wrap;">
             <button class="btn" onclick="validateConfig()">Validate</button>
             <button class="btn btn-success" onclick="saveConfig()">Save Configuration</button>
+            <a class="btn btn-secondary" href="{{ url_for('export_config') }}">Export</a>
+            <button class="btn btn-secondary" onclick="document.getElementById('import-file').click()">Import</button>
             <button class="btn btn-danger" onclick="restartService()">Restart Service</button>
         </div>
     </div>
+
+    <!-- Hidden file input + auto-submitting form for config import -->
+    <form id="import-form" method="POST" action="{{ url_for('import_config') }}"
+          enctype="multipart/form-data" style="display: none;">
+        <input type="file" id="import-file" name="config_file" accept=".conf,.json,application/json"
+               onchange="confirmImport()">
+    </form>
 
     <div id="message" style="margin-bottom: 1rem;"></div>
 
@@ -39,6 +48,19 @@
 </div>
 
 <script>
+function confirmImport() {
+    const input = document.getElementById('import-file');
+    if (!input.files || !input.files.length) return;
+    const name = input.files[0].name;
+    if (confirm('Import "' + name + '" and replace the current configuration?\n\n' +
+                'The current config will be backed up to kea-dhcp4.conf.bak and ' +
+                'KEA will be restarted.')) {
+        document.getElementById('import-form').submit();
+    } else {
+        input.value = '';  // reset so re-selecting the same file fires change again
+    }
+}
+
 function validateConfig() {
     try {
         const config = JSON.parse(document.getElementById('config-editor').value);
