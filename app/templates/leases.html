@@ -122,6 +122,22 @@
                     <input type="text" id="rsv-hostname" name="hostname"
                            placeholder="e.g. printer-floor3">
                 </div>
+                <div class="form-group">
+                    <label for="rsv-scope">Apply to</label>
+                    <select id="rsv-scope" name="apply_scope">
+                        <option value="single">This subnet only</option>
+                        <option value="amber">All Amber subnets (10.1.x)</option>
+                        <option value="blue">All Blue subnets (10.2.x)</option>
+                    </select>
+                    <small style="color: var(--text-muted); display: block; margin-top: 0.25rem;">
+                        For Amber/Blue the host part (e.g. .51) is kept and rebased into each subnet's range.
+                    </small>
+                </div>
+                <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <input type="checkbox" id="rsv-override" name="override" style="width: auto; margin: 0;">
+                    <label for="rsv-override" style="margin: 0; font-weight: 500;">Override existing reservation</label>
+                    <small style="color: var(--text-muted);">&mdash; replace if this MAC/IP is already reserved</small>
+                </div>
                 <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.5rem;">
                     <button type="button" class="btn btn-secondary" onclick="closeReserveModal()">Cancel</button>
                     <button type="submit" class="btn btn-success">Save Reservation</button>

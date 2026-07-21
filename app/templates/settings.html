@@ -140,9 +140,21 @@
             <form method="POST" action="{{ url_for('add_subnet') }}">
                 <div class="grid">
                     <div class="form-group">
+                        <label for="name">Name (optional):</label>
+                        <input type="text" id="name" name="name"
+                               placeholder="Amber Insel 6">
+                    </div>
+
+                    <div class="form-group">
                         <label for="subnet">Subnet (CIDR):</label>
                         <input type="text" id="subnet" name="subnet" required
                                placeholder="192.168.1.0/24">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="relay">Relay IP (giaddr):</label>
+                        <input type="text" id="relay" name="relay"
+                               placeholder="192.168.1.2">
                     </div>
 
                     <div class="form-group">
@@ -175,6 +187,12 @@
                                placeholder="local">
                     </div>
                 </div>
+                <p style="color: var(--text-muted); font-size: 0.82rem; margin-bottom: 1rem;">
+                    Relay IP is the address the DHCP relay inserts as <code>giaddr</code>
+                    (typically the router in the target subnet). Required when clients
+                    reach KEA through a relay rather than sitting on the same L2 segment.
+                    Leave DNS/Domain empty to inherit the global settings.
+                </p>
 
                 <div style="text-align: center;">
                     <button type="submit" class="btn btn-success">Add Subnet</button>
@@ -249,6 +267,16 @@
                                 </select>
                                 <small style="color: var(--text-muted); display: block; margin-top: 0.25rem;">
                                     For Amber/Blue, the host part (e.g. .81) is kept and rebased into each subnet's range.
+                                </small>
+                            </div>
+                            <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="checkbox" id="override-{{ loop.index0 }}" name="override"
+                                       style="width: auto; margin: 0;">
+                                <label for="override-{{ loop.index0 }}" style="margin: 0; font-weight: 500;">
+                                    Override existing reservation
+                                </label>
+                                <small style="color: var(--text-muted);">
+                                    &mdash; replace if this MAC/IP is already reserved
                                 </small>
                             </div>
                             <div style="text-align: center; margin-top: 1rem;">

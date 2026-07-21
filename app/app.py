@@ -579,6 +579,19 @@ def add_subnet():
             "option-data": []
         }
 
+        # Optional friendly name (stored in user-context, shown across the UI)
+        name = (request.form.get('name') or '').strip()
+        if name:
+            subnet_data["user-context"] = {"name": name}
+
+        # Relay IP(s) -- essential in relayed setups so KEA matches DHCP
+        # requests (by giaddr) to this subnet. Accepts comma-separated list.
+        relay_raw = (request.form.get('relay') or '').strip()
+        if relay_raw:
+            relay_ips = [r.strip() for r in relay_raw.split(',') if r.strip()]
+            if relay_ips:
+                subnet_data["relay"] = {"ip-addresses": relay_ips}
+
         # Add gateway if provided
         if request.form.get('gateway'):
             subnet_data["option-data"].append({
@@ -631,10 +644,29 @@ def delete_subnet(subnet_index):
 
     return redirect(url_for('settings'))
 
-def _add_reservation_to_subnet(subnet, mac, ip, hostname):
-    """Append a reservation to one subnet dict, skipping duplicates.
-    Returns a short status string for user feedback."""
+def _add_reservation_to_subnet(subnet, mac, ip, hostname, override=False):
+    """Append a reservation to one subnet dict.
+
+    Without override: skips if the MAC or IP already exists (returns
+    'skip-mac' / 'skip-ip'). With override: removes any existing reservation
+    for the same MAC or the same IP first, then adds the new one (returns
+    'replaced' if something was removed, else 'added')."""
     reservations = subnet.setdefault('reservations', [])
+
+    if override:
+        before = len(reservations)
+        reservations[:] = [
+            r for r in reservations
+            if (r.get('hw-address') or '').lower() != mac.lower()
+            and r.get('ip-address') != ip
+        ]
+        removed = before - len(reservations)
+        reservation = {'hw-address': mac, 'ip-address': ip}
+        if hostname:
+            reservation['hostname'] = hostname
+        reservations.append(reservation)
+        return 'replaced' if removed else 'added'
+
     for r in reservations:
         if (r.get('hw-address') or '').lower() == mac.lower():
             return 'skip-mac'
@@ -682,6 +714,7 @@ def add_reservation():
         ip = (request.form.get('ip_address') or '').strip()
         hostname = (request.form.get('hostname') or '').strip()
         scope = request.form.get('apply_scope', 'single')  # single | amber | blue
+        override = request.form.get('override') == 'on'
 
         if not (config and "Dhcp4" in config and "subnet4" in config["Dhcp4"]):
             flash('No configuration loaded!')
@@ -693,14 +726,17 @@ def add_reservation():
             return redirect(url_for('settings'))
 
         if scope == 'single':
-            status = _add_reservation_to_subnet(subnets[subnet_index], mac, ip, hostname)
+            status = _add_reservation_to_subnet(subnets[subnet_index], mac, ip, hostname, override)
             if status == 'skip-mac':
-                flash(f'MAC {mac} already reserved in this subnet.')
+                flash(f'MAC {mac} already reserved in this subnet. '
+                      f'Enable "override" to replace it.')
             elif status == 'skip-ip':
-                flash(f'IP {ip} already reserved in this subnet.')
+                flash(f'IP {ip} already reserved in this subnet. '
+                      f'Enable "override" to replace it.')
             elif validate_config(config):
                 save_config(config)
-                flash('Reservation added successfully!')
+                flash('Reservation replaced.' if status == 'replaced'
+                      else 'Reservation added successfully!')
             else:
                 flash('Invalid reservation configuration!')
             return redirect(url_for('settings'))
@@ -731,8 +767,8 @@ def add_reservation():
             if not (net.network_address < ipaddress.ip_address(target_ip) < net.broadcast_address):
                 skipped.append(f'{name} [out of range]')
                 continue
-            status = _add_reservation_to_subnet(s, mac, target_ip, hostname)
-            if status == 'added':
+            status = _add_reservation_to_subnet(s, mac, target_ip, hostname, override)
+            if status in ('added', 'replaced'):
                 added.append(f'{name} ({target_ip})')
             else:
                 skipped.append(f'{name} [{status}]')
@@ -1031,14 +1067,23 @@ def leases():
 def reserve_lease():
     """Promote a dynamic lease to a static reservation.
 
-    Auto-detects the target subnet from the IP, rejects duplicates against
-    existing reservations, and restarts the DHCP service so the change
-    takes effect immediately.
+    Scope:
+      single -> only the subnet that contains the IP (default)
+      amber  -> all Amber subnets, host part re-based into each
+      blue   -> all Blue subnets, host part re-based into each
+
+    Rejects duplicates, then restarts DHCP so the change takes effect.
     """
     try:
         ip = (request.form.get('ip_address') or '').strip()
         mac = (request.form.get('mac_address') or '').strip().lower()
         hostname = (request.form.get('hostname') or '').strip()
+        scope = request.form.get('apply_scope', 'single')  # single | amber | blue
+        override = request.form.get('override') == 'on'
+
+        # Don't store the placeholder hostname the lease parser uses.
+        if hostname.lower() == 'unknown':
+            hostname = ''
 
         if not ip or not mac:
             flash('IP and MAC are required to create a reservation.')
@@ -1055,44 +1100,75 @@ def reserve_lease():
             flash('No subnets configured -- cannot add a reservation.')
             return redirect(url_for('leases'))
 
-        # Find which subnet the IP belongs to.
-        target = None
-        for s in config['Dhcp4']['subnet4']:
+        subnets = config['Dhcp4']['subnet4']
+
+        # Find which subnet the IP belongs to (needed for single scope and to
+        # derive the prefix length for host-offset math).
+        source = None
+        for s in subnets:
             try:
                 net = ipaddress.ip_network(s.get('subnet', ''), strict=False)
             except ValueError:
                 continue
             if ip_obj in net:
-                target = s
+                source = s
+                source_net = net
                 break
 
-        if target is None:
+        if source is None:
             flash(f'No configured subnet contains {ip}.')
             return redirect(url_for('leases'))
 
-        # Reject duplicates -- KEA refuses to start with overlapping reservations.
-        existing = target.setdefault('reservations', [])
-        for r in existing:
-            if (r.get('hw-address') or '').lower() == mac:
-                flash(f'A reservation for MAC {mac} already exists in '
-                      f'{target.get("subnet")}.')
-                return redirect(url_for('leases'))
-            if r.get('ip-address') == ip:
-                flash(f'IP {ip} is already reserved in {target.get("subnet")}.')
-                return redirect(url_for('leases'))
+        if scope == 'single':
+            status = _add_reservation_to_subnet(source, mac, ip, hostname, override)
+            name = source.get('user-context', {}).get('name') or source.get('subnet')
+            if status == 'skip-mac':
+                flash(f'MAC {mac} already reserved in {name}. '
+                      f'Enable "override" to replace it.')
+            elif status == 'skip-ip':
+                flash(f'IP {ip} already reserved in {name}. '
+                      f'Enable "override" to replace it.')
+            else:
+                save_config(config)
+                restart_kea_service()
+                verb = 'Replaced reservation:' if status == 'replaced' else 'Reserved'
+                flash(f'{verb} {ip} -> {mac}'
+                      + (f' ({hostname})' if hostname else '')
+                      + f' in {name}. KEA was restarted.')
+            return redirect(url_for('leases'))
 
-        reservation = {'hw-address': mac, 'ip-address': ip}
-        if hostname and hostname.lower() != 'unknown':
-            reservation['hostname'] = hostname
-        existing.append(reservation)
+        # --- multi-subnet (amber / blue): keep host part, rebase per subnet ---
+        host_id = int(ip_obj) - int(source_net.network_address)
 
-        save_config(config)
-        restart_kea_service()
+        added, skipped = [], []
+        for s in subnets:
+            if _subnet_color(s) != scope:
+                continue
+            try:
+                net = ipaddress.ip_network(s.get('subnet', ''), strict=False)
+            except ValueError:
+                continue
+            target_ip = str(net.network_address + host_id)
+            name = s.get('user-context', {}).get('name') or s.get('subnet')
+            if not (net.network_address < ipaddress.ip_address(target_ip) < net.broadcast_address):
+                skipped.append(f'{name} [out of range]')
+                continue
+            status = _add_reservation_to_subnet(s, mac, target_ip, hostname, override)
+            if status in ('added', 'replaced'):
+                added.append(f'{name} ({target_ip})')
+            else:
+                skipped.append(f'{name} [{status}]')
 
-        name = target.get('user-context', {}).get('name') or target.get('subnet')
-        flash(f'Reserved {ip} -> {mac}'
-              + (f' ({hostname})' if hostname and hostname.lower() != 'unknown' else '')
-              + f' in {name}. KEA was restarted.')
+        if added:
+            save_config(config)
+            restart_kea_service()
+            msg = f'Reserved {mac} in {len(added)} {scope} subnets: ' + ', '.join(added)
+            if skipped:
+                msg += '. Skipped: ' + ', '.join(skipped)
+            flash(msg)
+        else:
+            flash(f'No reservations added to {scope} subnets. '
+                  + ('Skipped: ' + ', '.join(skipped) if skipped else 'No matching subnets.'))
     except Exception as e:
         flash(f'Error creating reservation: {e}')
 
