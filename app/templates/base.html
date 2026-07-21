@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}KEA DHCP Manager{% endblock %}</title>
+    <style>
+        :root {
+            --bg: #f7f7f8;
+            --surface: #ffffff;
+            --surface-2: #f4f4f5;
+            --border: #e4e4e7;
+            --border-strong: #d4d4d8;
+            --text: #18181b;
+            --text-muted: #52525b;
+            --text-faint: #a1a1aa;
+            --accent: #2563eb;
+            --accent-hover: #1d4ed8;
+            --accent-soft: #dbeafe;
+            --success: #16a34a;
+            --success-soft: #dcfce7;
+            --danger: #dc2626;
+            --danger-soft: #fee2e2;
+            --warn: #d97706;
+            --warn-soft: #fef3c7;
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+            --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+            --radius: 8px;
+            --radius-lg: 10px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #0b0b0d;
+                --surface: #18181b;
+                --surface-2: #27272a;
+                --border: #27272a;
+                --border-strong: #3f3f46;
+                --text: #fafafa;
+                --text-muted: #a1a1aa;
+                --text-faint: #71717a;
+                --accent: #3b82f6;
+                --accent-hover: #60a5fa;
+                --accent-soft: #1e3a8a;
+                --success: #22c55e;
+                --success-soft: #14532d;
+                --danger: #f87171;
+                --danger-soft: #7f1d1d;
+                --warn: #fbbf24;
+                --warn-soft: #78350f;
+                --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+                --shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
+            }
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html { font-size: 15px; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                         "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+            text-rendering: optimizeLegibility;
+        }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { color: var(--accent-hover); text-decoration: underline; }
+
+        h1, h2, h3, h4 { color: var(--text); font-weight: 600; line-height: 1.25; }
+        h2 { font-size: 1.35rem; }
+        h3 { font-size: 1.1rem; }
+        h4 { font-size: 1rem; }
+
+        code {
+            font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+            background: var(--surface-2);
+            padding: 0.1rem 0.35rem;
+            border-radius: 4px;
+            font-size: 0.9em;
+            color: var(--text);
+        }
+
+        .header {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 0.85rem 1.5rem;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            max-width: 1200px;
+            margin: 0 auto;
+            width: 100%;
+            gap: 1.5rem;
+        }
+
+        .nav h1 {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: var(--text);
+            letter-spacing: -0.01em;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 0.25rem;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            font-weight: 500;
+            padding: 0.4rem 0.75rem;
+            border-radius: 6px;
+            transition: background 0.15s, color 0.15s;
+        }
+
+        .nav-links a:hover {
+            background: var(--surface-2);
+            color: var(--text);
+            text-decoration: none;
+        }
+
+        .container {
+            flex: 1;
+            padding: 1.5rem;
+            max-width: 1200px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 1.5rem;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .card + .card { margin-top: 1rem; }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.4rem;
+            background: var(--accent);
+            color: #fff;
+            border: 1px solid var(--accent);
+            padding: 0.5rem 1rem;
+            border-radius: var(--radius);
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            line-height: 1.2;
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
+            margin: 0.15rem 0.15rem 0.15rem 0;
+            text-decoration: none;
+            font-family: inherit;
+        }
+
+        .btn:hover {
+            background: var(--accent-hover);
+            border-color: var(--accent-hover);
+            color: #fff;
+            text-decoration: none;
+        }
+
+        .btn:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }
+
+        .btn-secondary {
+            background: var(--surface);
+            color: var(--text);
+            border: 1px solid var(--border-strong);
+        }
+
+        .btn-secondary:hover {
+            background: var(--surface-2);
+            color: var(--text);
+            border-color: var(--border-strong);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            border-color: var(--danger);
+        }
+
+        .btn-danger:hover {
+            background: #b91c1c;
+            border-color: #b91c1c;
+        }
+
+        .btn-success {
+            background: var(--success);
+            border-color: var(--success);
+        }
+
+        .btn-success:hover {
+            background: #15803d;
+            border-color: #15803d;
+        }
+
+        .form-group { margin-bottom: 1.25rem; }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.4rem;
+            font-weight: 500;
+            font-size: 0.9rem;
+            color: var(--text);
+        }
+
+        .form-group input,
+        .form-group textarea,
+        .form-group select,
+        input[type="search"],
+        input[type="text"],
+        input[type="password"],
+        input[type="email"] {
+            width: 100%;
+            padding: 0.55rem 0.75rem;
+            border: 1px solid var(--border-strong);
+            background: var(--surface);
+            color: var(--text);
+            border-radius: var(--radius);
+            font-size: 0.95rem;
+            font-family: inherit;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus,
+        .form-group select:focus,
+        input[type="search"]:focus,
+        input[type="text"]:focus,
+        input[type="password"]:focus,
+        input[type="email"]:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-soft);
+        }
+
+        .alert {
+            padding: 0.75rem 1rem;
+            margin-bottom: 1rem;
+            border-radius: var(--radius);
+            font-size: 0.9rem;
+            border: 1px solid transparent;
+        }
+
+        .alert-success {
+            background: var(--success-soft);
+            color: var(--success);
+            border-color: var(--success);
+        }
+
+        .alert-error {
+            background: var(--danger-soft);
+            color: var(--danger);
+            border-color: var(--danger);
+        }
+
+        .alert-info {
+            background: var(--accent-soft);
+            color: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .config-editor {
+            font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+            font-size: 13px;
+            line-height: 1.55;
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius);
+            padding: 1rem;
+            background: var(--surface-2);
+            color: var(--text);
+            min-height: 400px;
+            resize: vertical;
+            width: 100%;
+        }
+
+        .config-editor:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-soft);
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 0.4rem;
+            vertical-align: middle;
+        }
+
+        .status-online { background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
+        .status-offline { background: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 0.5rem;
+            font-size: 0.9rem;
+        }
+
+        table th, table td {
+            padding: 0.6rem 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+            color: var(--text);
+        }
+
+        table th {
+            background: var(--surface-2);
+            font-weight: 500;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            border-bottom: 1px solid var(--border-strong);
+        }
+
+        table tbody tr:hover { background: var(--surface-2); }
+
+        /* Pill / badge */
+        .badge {
+            display: inline-block;
+            padding: 0.15rem 0.55rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            border-radius: 999px;
+            background: var(--surface-2);
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+        }
+
+        .badge-accent {
+            background: var(--accent-soft);
+            color: var(--accent);
+            border-color: transparent;
+        }
+
+        /* Collapsible group (used by leases) */
+        details.lease-group {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            margin-bottom: 0.75rem;
+            overflow: hidden;
+        }
+
+        details.lease-group > summary {
+            list-style: none;
+            padding: 0.85rem 1rem;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            user-select: none;
+        }
+
+        details.lease-group > summary::-webkit-details-marker { display: none; }
+
+        details.lease-group > summary::before {
+            content: "";
+            display: inline-block;
+            width: 0;
+            height: 0;
+            border-left: 5px solid var(--text-muted);
+            border-top: 4px solid transparent;
+            border-bottom: 4px solid transparent;
+            transition: transform 0.15s;
+            flex-shrink: 0;
+        }
+
+        details.lease-group[open] > summary::before { transform: rotate(90deg); }
+
+        details.lease-group > summary:hover { background: var(--surface-2); }
+
+        @media (max-width: 720px) {
+            .nav-links { gap: 0; flex-wrap: wrap; }
+            .nav-links a { padding: 0.4rem 0.5rem; font-size: 0.85rem; }
+            .container { padding: 1rem; }
+            .card { padding: 1.1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <nav class="nav">
+            <h1>KEA DHCP Manager</h1>
+            {% if session.user %}
+            <ul class="nav-links">
+                <li><a href="{{ url_for('index') }}">Dashboard</a></li>
+                <li><a href="{{ url_for('settings') }}">Settings</a></li>
+                <li><a href="{{ url_for('config') }}">Raw Config</a></li>
+                <li><a href="{{ url_for('leases') }}">Leases</a></li>
+                <li><a href="{{ url_for('logout') }}">Logout</a></li>
+            </ul>
+            {% endif %}
+        </nav>
+    </div>
+
+    <div class="container">
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="alert alert-success">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>

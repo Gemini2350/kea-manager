@@ -1,0 +1,33 @@
+# --- Runtime data / secrets (never commit) ---
+# The DDNS config in the repo keeps a placeholder TSIG key; the real key
+# lives only in the host volume. Guard against accidentally committing a
+# filled-in copy.
+**/kea-dhcp-ddns.local.conf
+**/*.key
+password_reset.key
+auth.db
+*.sqlite
+*.sqlite3
+
+# KEA lease databases
+*.csv.2
+kea-leases4.csv*
+
+# The IEEE OUI database is downloaded at image build time (~5 MB) --
+# no need to track it in git.
+app/oui.csv
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/

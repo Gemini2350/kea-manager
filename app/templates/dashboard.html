@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - KEA DHCP Manager{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2 style="margin-bottom: 1.25rem;">
+        <span class="status-indicator status-online"></span>
+        KEA DHCP Server Dashboard
+    </h2>
+
+    <div class="grid">
+        <div class="card">
+            <h3 style="margin-bottom: 0.75rem;">Quick Actions</h3>
+            <button class="btn" onclick="restartService()">Restart DHCP Service</button>
+            <button class="btn btn-secondary" onclick="location.href='{{ url_for('settings') }}'">Edit Configuration</button>
+            <button class="btn btn-secondary" onclick="location.href='{{ url_for('leases') }}'">View Leases</button>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-bottom: 0.75rem;">Server Information</h3>
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.35rem;"><span style="color: var(--text); font-weight: 500;">Config File:</span> <code>/etc/kea/kea-dhcp4.conf</code></p>
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.35rem;"><span style="color: var(--text); font-weight: 500;">Status:</span> <span class="status-indicator status-online"></span>Running</p>
+            <p style="color: var(--text-muted); font-size: 0.9rem;"><span style="color: var(--text); font-weight: 500;">User:</span> {{ session.user }}</p>
+        </div>
+    </div>
+
+    {% if config.Dhcp4 and config.Dhcp4.subnet4 %}
+    <div class="card" style="margin-top: 1rem;">
+        <h3 style="margin-bottom: 1rem;">Network Summary</h3>
+        <div class="grid" style="margin-top: 0;">
+            {% for subnet in config.Dhcp4.subnet4 %}
+            {% set subnet_name = subnet.get('user-context', {}).get('name') %}
+            <div style="padding: 0.85rem 1rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); border-left: 3px solid var(--accent);">
+                {% if subnet_name %}
+                    <p style="font-size: 0.95rem; font-weight: 600; margin-bottom: 0.4rem;">{{ subnet_name }}</p>
+                {% endif %}
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.2rem;"><span style="color: var(--text);">{{ subnet.subnet }}</span></p>
+                {% if subnet.pools %}
+                    {% set pool_range = subnet.pools[0].pool.split('-') %}
+                    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.15rem;">Pool: {{ pool_range[0].strip() }}&nbsp;–&nbsp;{{ pool_range[1].strip() }}</p>
+                {% endif %}
+                {% for option in subnet.get('option-data', []) %}
+                    {% if option.name == 'routers' %}
+                        <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.15rem;">Gateway: {{ option.data }}</p>
+                    {% elif option.name == 'domain-name-servers' %}
+                        <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.15rem;">DNS: {{ option.data }}</p>
+                    {% endif %}
+                {% endfor %}
+                <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.4rem;"><span class="badge">{{ subnet.reservations|length if subnet.reservations else 0 }} reserved</span></p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div id="message" style="margin-top: 1.5rem;"></div>
+</div>
+
+<script>
+function restartService() {
+    if (confirm('Are you sure you want to restart the DHCP service?')) {
+        fetch('/restart-service', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            const messageDiv = document.getElementById('message');
+            if (data.success) {
+                messageDiv.innerHTML = '<div class="alert alert-success">' + data.message + '</div>';
+            } else {
+                messageDiv.innerHTML = '<div class="alert alert-error">Error: ' + data.error + '</div>';
+            }
+        })
+        .catch(error => {
+            document.getElementById('message').innerHTML = '<div class="alert alert-error">Network error: ' + error + '</div>';
+        });
+    }
+}
+</script>
+{% endblock %}

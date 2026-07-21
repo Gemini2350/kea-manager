@@ -1,0 +1,352 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - KEA DHCP Manager{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+        <h2 style="color: var(--text);">DHCP Settings</h2>
+        <button class="btn btn-danger" onclick="restartService()">Restart Service</button>
+    </div>
+
+    <!-- Global Settings -->
+    <div class="card" style="margin-bottom: 2rem;">
+        <h3 style="color: var(--text); margin-bottom: 1.5rem;">Global Settings</h3>
+        <form method="POST" action="{{ url_for('update_settings') }}">
+            <div class="form-group">
+                <label for="interfaces">Network Interfaces (comma-separated):</label>
+                <input type="text" id="interfaces" name="interfaces"
+                       value="{% if config.Dhcp4 and config.Dhcp4['interfaces-config'] %}{{ config.Dhcp4['interfaces-config']['interfaces']|join(', ') }}{% else %}*{% endif %}"
+                       placeholder="*, eth0, wlan0">
+            </div>
+
+            <div class="grid">
+                <div class="form-group">
+                    <label for="renew_timer">Renew Timer (seconds):</label>
+                    <input type="number" id="renew_timer" name="renew_timer"
+                           value="{{ config.Dhcp4['renew-timer'] if config.Dhcp4 and config.Dhcp4.get('renew-timer') else 900 }}"
+                           min="60" max="86400">
+                </div>
+
+                <div class="form-group">
+                    <label for="rebind_timer">Rebind Timer (seconds):</label>
+                    <input type="number" id="rebind_timer" name="rebind_timer"
+                           value="{{ config.Dhcp4['rebind-timer'] if config.Dhcp4 and config.Dhcp4.get('rebind-timer') else 1800 }}"
+                           min="120" max="86400">
+                </div>
+
+                <div class="form-group">
+                    <label for="valid_lifetime">Lease Duration (seconds):</label>
+                    <input type="number" id="valid_lifetime" name="valid_lifetime"
+                           value="{{ config.Dhcp4['valid-lifetime'] if config.Dhcp4 and config.Dhcp4.get('valid-lifetime') else 3600 }}"
+                           min="300" max="604800">
+                </div>
+            </div>
+
+            <div style="text-align: center;">
+                <button type="submit" class="btn btn-success">Update Global Settings</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- DDNS Settings -->
+    <div class="card" style="margin-bottom: 2rem;">
+        <h3 style="color: var(--text); margin-bottom: 1rem;">Dynamic DNS (DDNS)</h3>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem;">
+            Forwards hostnames received via DHCP option 12 to an external DNS server
+            (e.g. BIND9 with allow-update + TSIG). Saving restarts both KEA daemons.
+        </p>
+        <form method="POST" action="{{ url_for('update_ddns') }}">
+            <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" id="ddns_enabled" name="ddns_enabled"
+                       {% if ddns.enabled %}checked{% endif %}
+                       style="width: auto; margin: 0;">
+                <label for="ddns_enabled" style="margin: 0; font-weight: 500;">
+                    Enable DDNS updates
+                </label>
+            </div>
+
+            <div class="grid">
+                <div class="form-group">
+                    <label for="dns_server">DNS Server IP:</label>
+                    <input type="text" id="dns_server" name="dns_server"
+                           value="{{ ddns.dns_server }}"
+                           placeholder="10.0.100.1">
+                </div>
+
+                <div class="form-group">
+                    <label for="forward_zone">Forward Zone:</label>
+                    <input type="text" id="forward_zone" name="forward_zone"
+                           value="{{ ddns.forward_zone }}"
+                           placeholder="simplexity.training">
+                </div>
+
+                <div class="form-group">
+                    <label for="qualifying_suffix">Qualifying Suffix:</label>
+                    <input type="text" id="qualifying_suffix" name="qualifying_suffix"
+                           value="{{ ddns.qualifying_suffix }}"
+                           placeholder="simplexity.training">
+                </div>
+            </div>
+
+            <h4 style="margin: 1rem 0 0.75rem 0;">TSIG Key</h4>
+            <div class="grid">
+                <div class="form-group">
+                    <label for="key_name">Key Name:</label>
+                    <input type="text" id="key_name" name="key_name"
+                           value="{{ ddns.key_name }}"
+                           placeholder="ddns-key">
+                </div>
+
+                <div class="form-group">
+                    <label for="key_algorithm">Algorithm:</label>
+                    <select id="key_algorithm" name="key_algorithm">
+                        {% set algos = ['HMAC-SHA256', 'HMAC-SHA512', 'HMAC-SHA1', 'HMAC-MD5'] %}
+                        {% for a in algos %}
+                        <option value="{{ a }}" {% if ddns.key_algorithm == a %}selected{% endif %}>{{ a }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="key_secret">Secret (Base64):</label>
+                <div style="display: flex; gap: 0.5rem; align-items: stretch;">
+                    <input type="password" id="key_secret" name="key_secret"
+                           value="{{ ddns.key_secret }}"
+                           placeholder="base64-encoded secret from BIND / pfSense"
+                           style="flex: 1; font-family: ui-monospace, SFMono-Regular, monospace;">
+                    <button type="button" class="btn btn-secondary"
+                            onclick="toggleSecret()" id="toggle-secret-btn">Show</button>
+                </div>
+            </div>
+
+            <div style="text-align: center; margin-top: 0.5rem;">
+                <button type="submit" class="btn btn-success">Save DDNS Settings</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Subnet Management -->
+    <div class="card" style="margin-bottom: 2rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h3 style="color: var(--text);">Subnets</h3>
+            <button class="btn" onclick="toggleAddSubnet()">Add New Subnet</button>
+        </div>
+
+        <!-- Add Subnet Form (Hidden by default) -->
+        <div id="add-subnet-form" style="display: none; margin-bottom: 2rem; padding: 1.5rem; background: var(--surface-2); border-radius: 12px;">
+            <h4 style="margin-bottom: 1rem; color: var(--text);">Add New Subnet</h4>
+            <form method="POST" action="{{ url_for('add_subnet') }}">
+                <div class="grid">
+                    <div class="form-group">
+                        <label for="subnet">Subnet (CIDR):</label>
+                        <input type="text" id="subnet" name="subnet" required
+                               placeholder="192.168.1.0/24">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="pool_start">Pool Start IP:</label>
+                        <input type="text" id="pool_start" name="pool_start" required
+                               placeholder="192.168.1.100">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="pool_end">Pool End IP:</label>
+                        <input type="text" id="pool_end" name="pool_end" required
+                               placeholder="192.168.1.200">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="gateway">Gateway IP:</label>
+                        <input type="text" id="gateway" name="gateway"
+                               placeholder="192.168.1.1">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="dns_servers">DNS Servers (comma-separated):</label>
+                        <input type="text" id="dns_servers" name="dns_servers"
+                               placeholder="8.8.8.8, 8.8.4.4">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="domain_name">Domain Name:</label>
+                        <input type="text" id="domain_name" name="domain_name"
+                               placeholder="local">
+                    </div>
+                </div>
+
+                <div style="text-align: center;">
+                    <button type="submit" class="btn btn-success">Add Subnet</button>
+                    <button type="button" class="btn" onclick="toggleAddSubnet()">Cancel</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Existing Subnets -->
+        {% if config.Dhcp4 and config.Dhcp4.subnet4 %}
+            {% for subnet in config.Dhcp4.subnet4 %}
+            {% set subnet_loop = loop %}
+            <div class="card" style="margin-bottom: 1rem; border-left: 3px solid var(--accent);">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
+                    <div>
+                        {% set subnet_name = subnet.get('user-context', {}).get('name') %}
+                        <h4 style="margin-bottom: 0.4rem;">
+                            {% if subnet_name %}{{ subnet_name }}{% else %}Subnet {{ subnet.id }}{% endif %}
+                            <span style="color: var(--text-faint); font-weight: normal; font-size: 0.9rem;">&mdash; {{ subnet.subnet }} (id {{ subnet.id }})</span>
+                        </h4>
+                        {% if subnet.pools %}
+                            <p><strong>Pool:</strong> {{ subnet.pools[0].pool }}</p>
+                        {% endif %}
+                        {% if subnet['option-data'] %}
+                            {% for option in subnet['option-data'] %}
+                                <p><strong>{{ option.name|title }}:</strong> {{ option.data }}</p>
+                            {% endfor %}
+                        {% endif %}
+                    </div>
+                    <form method="POST" action="{{ url_for('delete_subnet', subnet_index=loop.index0) }}" style="display: inline;">
+                        <button type="submit" class="btn btn-danger"
+                                onclick="return confirm('Are you sure you want to delete this subnet?')">
+                            Delete
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Static Reservations -->
+                <div style="margin-top: 1.5rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <h5 style="color: var(--text);">Static Reservations</h5>
+                        <button class="btn" onclick="toggleAddReservation({{ loop.index0 }})">Add Reservation</button>
+                    </div>
+
+                    <!-- Add Reservation Form -->
+                    <div id="add-reservation-{{ loop.index0 }}" style="display: none; margin-bottom: 1rem; padding: 1rem; background: var(--surface-2); border-radius: 8px;">
+                        <form method="POST" action="{{ url_for('add_reservation') }}">
+                            <input type="hidden" name="subnet_index" value="{{ loop.index0 }}">
+                            <div class="grid">
+                                <div class="form-group">
+                                    <label>MAC Address:</label>
+                                    <input type="text" name="mac_address" required
+                                           placeholder="aa:bb:cc:dd:ee:ff">
+                                </div>
+                                <div class="form-group">
+                                    <label>IP Address:</label>
+                                    <input type="text" name="ip_address" required
+                                           placeholder="192.168.1.50">
+                                </div>
+                                <div class="form-group">
+                                    <label>Hostname (optional):</label>
+                                    <input type="text" name="hostname"
+                                           placeholder="server1">
+                                </div>
+                            </div>
+                            <div class="form-group" style="margin-top: 0.5rem;">
+                                <label for="apply-scope-{{ loop.index0 }}">Apply to:</label>
+                                <select id="apply-scope-{{ loop.index0 }}" name="apply_scope">
+                                    <option value="single">This subnet only</option>
+                                    <option value="amber">All Amber subnets (10.1.x)</option>
+                                    <option value="blue">All Blue subnets (10.2.x)</option>
+                                </select>
+                                <small style="color: var(--text-muted); display: block; margin-top: 0.25rem;">
+                                    For Amber/Blue, the host part (e.g. .81) is kept and rebased into each subnet's range.
+                                </small>
+                            </div>
+                            <div style="text-align: center; margin-top: 1rem;">
+                                <button type="submit" class="btn btn-success">Add Reservation</button>
+                                <button type="button" class="btn" onclick="toggleAddReservation({{ loop.index0 }})">Cancel</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Existing Reservations -->
+                    {% if subnet.reservations %}
+                        <div style="overflow-x: auto;">
+                            <table style="width: 100%; border-collapse: collapse; margin-top: 1rem;">
+                                <thead>
+                                    <tr style="background: var(--surface-2);">
+                                        <th style="padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-strong);">MAC Address</th>
+                                        <th style="padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-strong);">IP Address</th>
+                                        <th style="padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-strong);">Hostname</th>
+                                        <th style="padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-strong);">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for reservation in subnet.reservations %}
+                                    <tr>
+                                        <td style="padding: 0.75rem; border-bottom: 1px solid var(--border);">{{ reservation['hw-address'] }}</td>
+                                        <td style="padding: 0.75rem; border-bottom: 1px solid var(--border);">{{ reservation['ip-address'] }}</td>
+                                        <td style="padding: 0.75rem; border-bottom: 1px solid var(--border);">{{ reservation.hostname or '-' }}</td>
+                                        <td style="padding: 0.75rem; border-bottom: 1px solid var(--border);">
+                                            <form method="POST" action="{{ url_for('delete_reservation', subnet_index=subnet_loop.index0, reservation_index=loop.index0) }}" style="display: inline;">
+                                                <button type="submit" class="btn btn-danger" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;"
+                                                        onclick="return confirm('Are you sure you want to delete this reservation?')">
+                                                    Delete
+                                                </button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <p style="color: var(--text-muted); text-align: center; padding: 1rem;">No static reservations configured</p>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <p style="text-align: center; color: var(--text-muted); padding: 2rem;">No subnets configured. Add your first subnet above.</p>
+        {% endif %}
+    </div>
+
+    <div id="message" style="margin-top: 2rem;"></div>
+</div>
+
+<script>
+function toggleSecret() {
+    const input = document.getElementById('key_secret');
+    const btn = document.getElementById('toggle-secret-btn');
+    if (input.type === 'password') {
+        input.type = 'text';
+        btn.textContent = 'Hide';
+    } else {
+        input.type = 'password';
+        btn.textContent = 'Show';
+    }
+}
+
+function toggleAddSubnet() {
+    const form = document.getElementById('add-subnet-form');
+    form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+function toggleAddReservation(subnetIndex) {
+    const form = document.getElementById('add-reservation-' + subnetIndex);
+    form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+function restartService() {
+    if (confirm('Are you sure you want to restart the DHCP service?')) {
+        fetch('/restart-service', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            const messageDiv = document.getElementById('message');
+            if (data.success) {
+                messageDiv.innerHTML = '<div class="alert alert-success">' + data.message + '</div>';
+            } else {
+                messageDiv.innerHTML = '<div class="alert alert-error">Error: ' + data.error + '</div>';
+            }
+        })
+        .catch(error => {
+            document.getElementById('message').innerHTML = '<div class="alert alert-error">Network error: ' + error + '</div>';
+        });
+    }
+}
+</script>
+{% endblock %}

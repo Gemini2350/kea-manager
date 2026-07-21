@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+
+{% block title %}Leases - KEA DHCP Manager{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 0.75rem;">
+        <h2>Active DHCP Leases</h2>
+        <div style="display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;">
+            <span id="autorefresh-status" style="color: var(--text-muted); font-size: 0.85rem;"></span>
+            <button id="autorefresh-toggle" class="btn btn-secondary" onclick="toggleAutoRefresh()" title="Toggle auto-refresh"></button>
+            <button class="btn btn-secondary" onclick="expandAll(true)">Expand All</button>
+            <button class="btn btn-secondary" onclick="expandAll(false)">Collapse All</button>
+            <button class="btn" onclick="location.reload()">Refresh</button>
+        </div>
+    </div>
+
+    {% if error %}
+        <div class="alert alert-error">
+            <strong>Error:</strong> {{ error }}
+        </div>
+    {% endif %}
+
+    <div style="margin-bottom: 1.25rem;">
+        <input type="search" id="lease-search" placeholder="Search by IP, MAC, vendor, hostname, client-id..."
+               oninput="filterLeases()">
+        <div id="search-summary" style="margin-top: 0.5rem; color: var(--text-muted); font-size: 0.85rem;">
+            <strong>Total Active Leases:</strong> {{ total }}
+        </div>
+    </div>
+
+    {% if groups %}
+        {% for group in groups %}
+        <details class="lease-group" data-group-name="{{ group.name|lower }}" data-group-cidr="{{ group.cidr }}" {% if group.leases %}open{% endif %}>
+            <summary>
+                <span>{{ group.name }}</span>
+                {% if group.cidr %}<span style="color: var(--text-faint); font-weight: normal;">{{ group.cidr }}</span>{% endif %}
+                <span class="badge badge-accent" style="margin-left: auto;">{{ group.leases|length }} lease{{ '' if group.leases|length == 1 else 's' }}</span>
+            </summary>
+            <div style="padding: 0 1rem 1rem 1rem;">
+                {% if group.leases %}
+                <div style="overflow-x: auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>IP Address</th>
+                                <th>MAC Address</th>
+                                <th>Vendor</th>
+                                <th>Hostname</th>
+                                <th>Subnet ID</th>
+                                <th>Lifetime (sec)</th>
+                                <th>Expires</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for lease in group.leases %}
+                            <tr class="lease-row">
+                                <td><strong>{{ lease.ip }}</strong></td>
+                                <td>{{ lease.mac }}</td>
+                                <td>{{ lease.vendor if lease.vendor else '-' }}</td>
+                                <td>{{ lease.hostname }}</td>
+                                <td>{{ lease.subnet_id }}</td>
+                                <td>{{ lease.lifetime }}</td>
+                                <td>{{ lease.expire }}</td>
+                                <td>
+                                    <button type="button" class="btn btn-secondary reserve-btn"
+                                            style="padding: 0.2rem 0.55rem; font-size: 0.8rem;"
+                                            data-ip="{{ lease.ip }}"
+                                            data-mac="{{ lease.mac }}"
+                                            data-hostname="{{ lease.hostname }}"
+                                            data-vendor="{{ lease.vendor }}">
+                                        Reserve
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p style="color: var(--text-muted); padding: 0.25rem 0;">No leases in this subnet.</p>
+                {% endif %}
+            </div>
+        </details>
+        {% endfor %}
+    {% else %}
+        <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
+            <h4 style="margin-bottom: 0.5rem;">No Active Leases Found</h4>
+            <p>This could mean:</p>
+            <ul style="text-align: left; display: inline-block; margin-top: 0.75rem;">
+                <li>No devices have requested DHCP leases yet</li>
+                <li>Lease file is not accessible or empty</li>
+                <li>DHCP server is not running or configured</li>
+            </ul>
+        </div>
+    {% endif %}
+
+    <!-- Reservation modal -->
+    <div id="reserve-modal" style="display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); align-items: center; justify-content: center; z-index: 100;" onclick="if (event.target === this) closeReserveModal();">
+        <div class="card" style="max-width: 480px; width: 90%; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
+            <h3 style="margin-bottom: 0.25rem;">Convert lease to reservation</h3>
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
+                Pre-filled from the dynamic lease. All fields are editable —
+                e.g. assign a different IP outside the pool, or fix the hostname.
+                KEA service restarts on save.
+            </p>
+            <form method="POST" action="{{ url_for('reserve_lease') }}">
+                <div class="form-group">
+                    <label for="rsv-ip">IP Address</label>
+                    <input type="text" id="rsv-ip" name="ip_address" required
+                           style="font-family: ui-monospace, SFMono-Regular, monospace;">
+                </div>
+                <div class="form-group">
+                    <label for="rsv-mac">MAC Address</label>
+                    <input type="text" id="rsv-mac" name="mac_address" required
+                           style="font-family: ui-monospace, SFMono-Regular, monospace;">
+                    <small id="rsv-vendor-hint" style="color: var(--text-muted); display: block; margin-top: 0.25rem;"></small>
+                </div>
+                <div class="form-group">
+                    <label for="rsv-hostname">Hostname <span style="color: var(--text-faint); font-weight: normal;">(optional, used by DDNS)</span></label>
+                    <input type="text" id="rsv-hostname" name="hostname"
+                           placeholder="e.g. printer-floor3">
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.5rem;">
+                    <button type="button" class="btn btn-secondary" onclick="closeReserveModal()">Cancel</button>
+                    <button type="submit" class="btn btn-success">Save Reservation</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div style="margin-top: 1.5rem; padding: 1rem 1.25rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-muted); font-size: 0.85rem;">
+        <h4 style="margin-bottom: 0.5rem;">Lease File Locations</h4>
+        <p>KEA DHCP stores lease information in CSV format at:</p>
+        <ul style="margin-left: 1.5rem; margin-top: 0.4rem;">
+            <li><code>/var/lib/kea/kea-leases4.csv</code> (default location)</li>
+            <li><code>/var/lib/kea/dhcp4.leases</code> (alternative location)</li>
+            <li><code>/tmp/kea-leases4.csv</code> (temporary location)</li>
+        </ul>
+    </div>
+</div>
+
+<script>
+// --- Auto-refresh ---
+const REFRESH_INTERVAL = 30; // seconds
+let refreshSecondsLeft = REFRESH_INTERVAL;
+let refreshTimer = null;
+let autoRefreshEnabled = localStorage.getItem('leasesAutoRefresh') !== 'off';
+
+function updateAutoRefreshUI() {
+    const btn = document.getElementById('autorefresh-toggle');
+    const status = document.getElementById('autorefresh-status');
+    if (autoRefreshEnabled) {
+        btn.textContent = 'Auto: On';
+        const searchHasText = document.getElementById('lease-search').value.trim().length > 0;
+        if (searchHasText) {
+            status.textContent = 'paused (search active)';
+        } else {
+            status.textContent = 'next reload in ' + refreshSecondsLeft + 's';
+        }
+    } else {
+        btn.textContent = 'Auto: Off';
+        status.textContent = '';
+    }
+}
+
+function tickAutoRefresh() {
+    if (!autoRefreshEnabled) { updateAutoRefreshUI(); return; }
+    const modalOpen = document.getElementById('reserve-modal').style.display === 'flex';
+    const searchHasText = document.getElementById('lease-search').value.trim().length > 0;
+    if (!searchHasText && !modalOpen) {
+        refreshSecondsLeft--;
+        if (refreshSecondsLeft <= 0) {
+            location.reload();
+            return;
+        }
+    }
+    updateAutoRefreshUI();
+}
+
+function toggleAutoRefresh() {
+    autoRefreshEnabled = !autoRefreshEnabled;
+    localStorage.setItem('leasesAutoRefresh', autoRefreshEnabled ? 'on' : 'off');
+    refreshSecondsLeft = REFRESH_INTERVAL;
+    updateAutoRefreshUI();
+}
+
+// Start the ticker
+refreshTimer = setInterval(tickAutoRefresh, 1000);
+// Initial paint
+document.addEventListener('DOMContentLoaded', updateAutoRefreshUI);
+
+function expandAll(open) {
+    document.querySelectorAll('details.lease-group').forEach(d => { d.open = open; });
+}
+
+// --- Reserve-lease modal ---
+function openReserveModal(ip, mac, hostname, vendor) {
+    document.getElementById('rsv-ip').value = ip || '';
+    document.getElementById('rsv-mac').value = mac || '';
+    // 'Unknown' is the placeholder we use in the lease parser; don't pre-fill it.
+    const cleanHost = (hostname && hostname !== 'Unknown') ? hostname : '';
+    document.getElementById('rsv-hostname').value = cleanHost;
+    document.getElementById('rsv-vendor-hint').textContent =
+        vendor ? ('Vendor: ' + vendor) : '';
+    document.getElementById('reserve-modal').style.display = 'flex';
+    // Focus the hostname so users can fill it in immediately if missing.
+    setTimeout(() => document.getElementById('rsv-hostname').focus(), 50);
+    // Pause auto-refresh while the modal is open.
+    autoRefreshEnabled = false;
+    updateAutoRefreshUI();
+}
+
+// Wire up Reserve buttons via data-* attributes -- avoids inline-onclick
+// quoting headaches when MAC/hostname contain special characters.
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('button.reserve-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            openReserveModal(
+                btn.dataset.ip,
+                btn.dataset.mac,
+                btn.dataset.hostname,
+                btn.dataset.vendor
+            );
+        });
+    });
+});
+
+function closeReserveModal() {
+    document.getElementById('reserve-modal').style.display = 'none';
+    // Restore auto-refresh state from localStorage when closing.
+    autoRefreshEnabled = localStorage.getItem('leasesAutoRefresh') !== 'off';
+    refreshSecondsLeft = REFRESH_INTERVAL;
+    updateAutoRefreshUI();
+}
+
+// ESC to close the modal
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' &&
+        document.getElementById('reserve-modal').style.display === 'flex') {
+        closeReserveModal();
+    }
+});
+
+function filterLeases() {
+    const q = document.getElementById('lease-search').value.trim().toLowerCase();
+    // Reset countdown when user starts typing, so the page doesn't reload
+    // a second after they finally typed their full query.
+    refreshSecondsLeft = REFRESH_INTERVAL;
+    updateAutoRefreshUI();
+    let visibleRows = 0;
+    let visibleGroups = 0;
+
+    document.querySelectorAll('details.lease-group').forEach(group => {
+        let matchesInGroup = 0;
+        const groupHeader = (group.dataset.groupName || '') + ' ' + (group.dataset.groupCidr || '');
+        const groupNameMatch = q && groupHeader.includes(q);
+
+        group.querySelectorAll('tr.lease-row').forEach(row => {
+            const text = row.textContent.toLowerCase();
+            const match = !q || text.includes(q) || groupNameMatch;
+            row.style.display = match ? '' : 'none';
+            if (match) matchesInGroup++;
+        });
+
+        if (!q) {
+            group.style.display = '';
+            visibleRows += matchesInGroup;
+            visibleGroups++;
+        } else if (matchesInGroup > 0 || groupNameMatch) {
+            group.style.display = '';
+            group.open = true;
+            visibleRows += matchesInGroup;
+            visibleGroups++;
+        } else {
+            group.style.display = 'none';
+        }
+    });
+
+    const summary = document.getElementById('search-summary');
+    if (q) {
+        summary.innerHTML = '<strong>' + visibleRows + '</strong> matching lease' +
+            (visibleRows === 1 ? '' : 's') +
+            ' in ' + visibleGroups + ' subnet' + (visibleGroups === 1 ? '' : 's') +
+            ' &mdash; <a href="#" onclick="clearSearch(); return false;">clear</a>';
+    } else {
+        summary.innerHTML = '<strong>Total Active Leases:</strong> {{ total }}';
+    }
+}
+
+function clearSearch() {
+    document.getElementById('lease-search').value = '';
+    filterLeases();
+}
+</script>
+{% endblock %}

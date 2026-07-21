@@ -1,0 +1,28 @@
+# Keep the build context small and free of anything sensitive or irrelevant.
+.git
+.github
+.gitignore
+.dockerignore
+README.md
+LICENSE
+
+# Never bake secrets or runtime state into the image
+**/*.key
+password_reset.key
+auth.db
+*.sqlite*
+*.csv.2
+kea-leases4.csv*
+
+# The OUI database is downloaded during build, don't copy a local one in
+app/oui.csv
+
+# Python / OS cruft
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
