@@ -23,8 +23,10 @@ docker run -d \
   --hostname kea-manager \
   --network host \
   -e TZ=UTC \
+  -v ./kea-config:/etc/kea \
+  -v ./kea-leases:/var/lib/kea \
   --restart always \
-  cyb3rdoc/kea-manager:latest
+  gemini2350/kea-manager:latest
 ```
 
 ### Using Docker Compose
@@ -32,14 +34,19 @@ docker run -d \
 ```yaml
 services:
   kea-manager:
-    image: cyb3rdoc/kea-manager:latest
+    image: gemini2350/kea-manager:latest
     container_name: kea-manager
     hostname: kea-manager
     network_mode: host
     environment:
       - TZ=UTC
+    volumes:
+      - ./kea-config:/etc/kea    # config, auth.db, session key
+      - ./kea-leases:/var/lib/kea # lease database
     restart: always
 ```
+
+A ready-to-use `docker-compose.yml` is included in the repository.
 
 ## Initial Setup
 
@@ -55,6 +62,7 @@ The container exposes `/etc/kea` as a volume where all configuration files are s
 - `kea-dhcp4.conf` - Main KEA DHCP configuration
 - `auth.db` - User authentication database
 - `password_reset.key` - Temporary password reset keys
+- `secret.key` - Auto-generated Flask session key (created on first start)
 
 ## Password Recovery
 
@@ -85,7 +93,10 @@ When using host networking, these ports are exposed directly on the host:
 ## Environment Variables
 
 - `TZ` - Timezone (default: UTC)
-- `SECRET_KEY` - Flask session secret (auto-generated if not provided)
+- `SECRET_KEY` - Flask session secret. Optional: if not set, a key is generated
+  on first start and persisted as `secret.key` in the `/etc/kea` volume, so
+  logins survive container restarts. Set it only if you want to manage the key
+  yourself.
 
 ## Building from Source
 

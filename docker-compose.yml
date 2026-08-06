@@ -1,0 +1,14 @@
+# KEA DHCP Manager -- deployment via the published Docker Hub image.
+# Host networking is required: DHCP works with broadcasts on UDP/67.
+services:
+  kea-manager:
+    image: gemini2350/kea-manager:latest
+    container_name: kea-manager
+    hostname: kea-manager
+    network_mode: host
+    environment:
+      - TZ=UTC
+    volumes:
+      - ./kea-config:/etc/kea    # config, auth.db, session key
+      - ./kea-leases:/var/lib/kea # lease database
+    restart: always

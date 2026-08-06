@@ -16,7 +16,6 @@ import subprocess
 import signal
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
 # All filesystem locations are env-overridable so the app can run locally for
 # development without the container's /etc/kea and /var/lib/kea directories.
@@ -28,8 +27,36 @@ AUTH_DB = os.path.join(KEA_ETC_DIR, 'auth.db')
 CONFIG_FILE = os.path.join(KEA_ETC_DIR, 'kea-dhcp4.conf')
 DDNS_CONFIG_FILE = os.path.join(KEA_ETC_DIR, 'kea-dhcp-ddns.conf')
 RESET_KEY_FILE = os.path.join(KEA_ETC_DIR, 'password_reset.key')
+SECRET_KEY_FILE = os.path.join(KEA_ETC_DIR, 'secret.key')
 LEASE_FILE = os.path.join(KEA_VAR_DIR, 'kea-leases4.csv')
 OUI_CSV = os.environ.get('OUI_CSV', '/app/oui.csv')
+
+
+def _load_or_create_secret_key():
+    """Return a persistent Flask session key so logins survive restarts.
+
+    Generated once on first start and stored next to auth.db in the config
+    volume. A SECRET_KEY environment variable still takes precedence.
+    """
+    try:
+        if os.path.exists(SECRET_KEY_FILE):
+            with open(SECRET_KEY_FILE) as f:
+                key = f.read().strip()
+            if key:
+                return key
+        key = secrets.token_hex(32)
+        with open(SECRET_KEY_FILE, 'w') as f:
+            f.write(key)
+        os.chmod(SECRET_KEY_FILE, 0o600)
+        return key
+    except OSError as e:
+        # Config dir not writable (yet) -- fall back to an ephemeral key
+        # rather than refusing to start; sessions then reset on restart.
+        print(f"Warning: cannot persist secret key ({e}), using ephemeral key")
+        return secrets.token_hex(32)
+
+
+app.secret_key = os.environ.get('SECRET_KEY') or _load_or_create_secret_key()
 
 # Dev mode: skip real KEA binary calls (validation via JSON only, no restarts).
 # Auto-enabled when the kea-dhcp4 binary isn't on PATH.
