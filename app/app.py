@@ -18,11 +18,24 @@ import signal
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
-AUTH_DB = '/etc/kea/auth.db'
-CONFIG_FILE = '/etc/kea/kea-dhcp4.conf'
-DDNS_CONFIG_FILE = '/etc/kea/kea-dhcp-ddns.conf'
-RESET_KEY_FILE = '/etc/kea/password_reset.key'
+# All filesystem locations are env-overridable so the app can run locally for
+# development without the container's /etc/kea and /var/lib/kea directories.
+# In production (Docker) the defaults below are used unchanged.
+KEA_ETC_DIR = os.environ.get('KEA_ETC_DIR', '/etc/kea')
+KEA_VAR_DIR = os.environ.get('KEA_VAR_DIR', '/var/lib/kea')
+
+AUTH_DB = os.path.join(KEA_ETC_DIR, 'auth.db')
+CONFIG_FILE = os.path.join(KEA_ETC_DIR, 'kea-dhcp4.conf')
+DDNS_CONFIG_FILE = os.path.join(KEA_ETC_DIR, 'kea-dhcp-ddns.conf')
+RESET_KEY_FILE = os.path.join(KEA_ETC_DIR, 'password_reset.key')
+LEASE_FILE = os.path.join(KEA_VAR_DIR, 'kea-leases4.csv')
 OUI_CSV = os.environ.get('OUI_CSV', '/app/oui.csv')
+
+# Dev mode: skip real KEA binary calls (validation via JSON only, no restarts).
+# Auto-enabled when the kea-dhcp4 binary isn't on PATH.
+import shutil as _shutil
+DEV_MODE = (os.environ.get('KEA_DEV', '').lower() in ('1', 'true', 'yes')
+            or _shutil.which('kea-dhcp4') is None)
 
 # In-memory OUI lookup table: 6-char hex prefix (uppercase, no separators) -> vendor name.
 # Populated once at process startup from the IEEE OUI CSV bundled in the image.
@@ -203,7 +216,10 @@ def save_ddns_config(config):
 
 
 def restart_ddns_service():
-    """Send SIGTERM to kea-dhcp-ddns; supervisord respawns it."""
+    """Send SIGTERM to kea-dhcp-ddns; supervisord respawns it (no-op in dev)."""
+    if DEV_MODE:
+        print("[dev] restart_ddns_service skipped")
+        return True
     try:
         result = subprocess.run(['pgrep', 'kea-dhcp-ddns'],
                                 capture_output=True, text=True)
@@ -216,7 +232,10 @@ def restart_ddns_service():
         return False
 
 def restart_kea_service():
-    """Restart KEA DHCP service"""
+    """Restart KEA DHCP service (no-op in dev mode)."""
+    if DEV_MODE:
+        print("[dev] restart_kea_service skipped")
+        return True
     try:
         # Find KEA process and send SIGTERM
         result = subprocess.run(['pgrep', 'kea-dhcp4'], capture_output=True, text=True)
@@ -228,7 +247,13 @@ def restart_kea_service():
         return False
 
 def validate_config(config):
-    """Validate KEA configuration"""
+    """Validate KEA configuration.
+
+    In production this shells out to `kea-dhcp4 -t`. In dev mode (no binary)
+    it falls back to a structural JSON check so the app stays usable locally.
+    """
+    if DEV_MODE:
+        return isinstance(config, dict) and 'Dhcp4' in config
     try:
         temp_file = '/tmp/kea-test.conf'
         with open(temp_file, 'w') as f:
@@ -964,7 +989,7 @@ def parse_lease_file():
     result -- KEA briefly empties the file during rotations and we don't
     want the UI to flicker to 'no leases' for half a second.
     """
-    base = '/var/lib/kea/kea-leases4.csv'
+    base = LEASE_FILE
 
     # Older snapshot first so newer writes (current file) overwrite.
     latest_by_ip = {}

@@ -17,6 +17,9 @@ kea-leases4.csv*
 # no need to track it in git.
 app/oui.csv
 
+# --- Local dev sandbox (created by run-local.sh) ---
+dev/
+
 # --- Python ---
 __pycache__/
 *.py[cod]

@@ -95,6 +95,63 @@ cd kea-manager
 docker build -t kea-manager .
 ```
 
+## Local Development
+
+You can run just the Flask web UI on your own machine — no Docker and no real
+KEA server required. Handy for working on templates and routes.
+
+```bash
+git clone <repository-url>
+cd kea-manager
+./run-local.sh
+```
+
+The script creates a virtualenv, installs the dependencies from
+`requirements.txt`, seeds a throwaway sandbox under `./dev/` (a copy of the
+sample config plus a demo lease file), and starts the app on
+<http://localhost:5000>.
+
+Under the hood it sets a few environment variables that make the app portable:
+
+| Variable       | Purpose                                            | Default          |
+|----------------|----------------------------------------------------|------------------|
+| `KEA_DEV`      | Dev mode: skip real `kea-dhcp4` calls; validate config structurally; no service restarts. Auto-enabled when the `kea-dhcp4` binary isn't on `PATH`. | off in Docker |
+| `KEA_ETC_DIR`  | Directory for `kea-dhcp4.conf`, `kea-dhcp-ddns.conf`, `auth.db` | `/etc/kea`   |
+| `KEA_VAR_DIR`  | Directory for the lease database                   | `/var/lib/kea`   |
+| `OUI_CSV`      | Path to the IEEE OUI database for vendor lookup    | `/app/oui.csv`   |
+| `SECRET_KEY`   | Flask session secret                               | auto-generated   |
+
+The `dev/` sandbox is git-ignored, so you can delete it any time to start fresh.
+
+### Editor tips (VS Code)
+
+The app is a single Flask module in `app/app.py` with Jinja templates in
+`app/templates/`. For syntax highlighting of the `.conf` files (they're JSON),
+add to your workspace settings:
+
+```json
+{
+  "files.associations": { "*.conf": "json" },
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
+}
+```
+
+## Project Layout
+
+```
+kea-manager/
+├── app/
+│   ├── app.py              # Flask app: routes, config/lease/DDNS logic
+│   └── templates/          # Jinja2 templates (dashboard, leases, settings, ...)
+├── config/                 # Sample KEA + supervisord configs (image defaults)
+├── Dockerfile              # Alpine image: KEA daemons + Python + supervisord
+├── docker-compose.yml      # Deployment (pulls the published image)
+├── entrypoint.sh           # Seeds config into the volume, validates, starts supervisord
+├── requirements.txt        # Python deps for local development
+├── run-local.sh            # One-command local dev server
+└── .github/workflows/      # CI: build + push image to Docker Hub
+```
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.

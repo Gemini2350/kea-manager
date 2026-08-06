@@ -1,0 +1,5 @@
+# Runtime dependencies for the KEA Manager Flask app.
+# In the Docker image these come from Alpine packages (py3-flask, py3-werkzeug);
+# this file is for running/developing locally in a virtualenv.
+Flask>=3.0,<4.0
+Werkzeug>=3.0,<4.0
