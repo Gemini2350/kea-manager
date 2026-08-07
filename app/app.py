@@ -1066,24 +1066,81 @@ def _read_lease_csv(path):
     return result
 
 
-def parse_lease_file():
-    """Parse KEA lease file(s) with dedupe and stale-cache fallback.
+def _as_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
-    Reads both '.2' (older snapshot, exists during LFC) and the current
-    file, merging into one dict per-IP with last-write-wins. Returns
-    only active leases (state == 0). If a fresh read returns nothing
-    while we have a recent non-empty result cached, returns the cached
-    result -- KEA briefly empties the file during rotations and we don't
-    want the UI to flicker to 'no leases' for half a second.
+
+def _leases_from_socket():
+    """Fetch active leases from the running server via lease4-get-all.
+
+    Returns a list in the same shape as the CSV parser, or None when the
+    command failed (socket down, hook missing) so callers can fall back
+    to reading the lease file.
     """
-    base = LEASE_FILE
+    resp = kea_ctrl_command('lease4-get-all')
+    if resp.get('result') == 3:      # "0 IPv4 lease(s) found" -- valid, empty
+        return []
+    if resp.get('result') != 0:
+        print(f"_leases_from_socket: {resp.get('text', 'unknown error')}")
+        return None
+    leases = []
+    for l in (resp.get('arguments') or {}).get('leases', []):
+        if l.get('state', 0) != 0:   # only default/active leases
+            continue
+        mac = l.get('hw-address', '')
+        leases.append({
+            'ip': l.get('ip-address', ''),
+            'mac': mac,
+            'vendor': mac_to_vendor(mac),
+            'client_id': l.get('client-id', ''),
+            'lifetime': str(l.get('valid-lft', '')),
+            'expire': str(l.get('cltt', 0) + l.get('valid-lft', 0)),
+            'subnet_id': str(l.get('subnet-id', '')),
+            'hostname': l.get('hostname') or 'Unknown',
+            'state': str(l.get('state', 0)),
+        })
+    return leases
 
-    # Older snapshot first so newer writes (current file) overwrite.
-    latest_by_ip = {}
-    latest_by_ip.update(_read_lease_csv(base + '.2'))
-    latest_by_ip.update(_read_lease_csv(base))
 
-    fresh = [l for l in latest_by_ip.values() if l['state'] == '0']
+def parse_lease_file():
+    """Return the active leases, with dedupe and stale-cache fallback.
+
+    Production: asks the running kea-dhcp4 via the control socket
+    (lease4-get-all), which reflects releases and reclaims immediately.
+    Falls back to parsing the lease CSV when the socket is unavailable.
+
+    CSV fallback: reads both '.2' (older snapshot, exists during LFC) and
+    the current file, merging per-IP with last-write-wins, then drops
+    non-active rows, release/delete markers and expired leases. If a
+    fresh read returns nothing while we have a recent non-empty result
+    cached, returns the cached result -- KEA briefly empties the file
+    during rotations and we don't want the UI to flicker to 'no leases'.
+    """
+    fresh = None
+    if not DEV_MODE:
+        # Primary source: the running server via lease4-get-all. The CSV
+        # is an append-only journal that keeps stale rows for released /
+        # reclaimed leases; the server's in-memory view is the truth.
+        fresh = _leases_from_socket()
+
+    if fresh is None:
+        base = LEASE_FILE
+
+        # Older snapshot first so newer writes (current file) overwrite.
+        latest_by_ip = {}
+        latest_by_ip.update(_read_lease_csv(base + '.2'))
+        latest_by_ip.update(_read_lease_csv(base))
+
+        now_ts = time.time()
+        fresh = [l for l in latest_by_ip.values()
+                 if l['state'] == '0'
+                 # valid_lifetime=0 rows are release/delete markers
+                 and l['lifetime'] != '0'
+                 # skip expired-but-not-yet-reclaimed leases
+                 and _as_float(l['expire']) > now_ts]
 
     with _LEASE_CACHE_LOCK:
         now = time.time()

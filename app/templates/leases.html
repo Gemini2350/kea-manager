@@ -153,13 +153,11 @@
     </div>
 
     <div style="margin-top: 1.5rem; padding: 1rem 1.25rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-muted); font-size: 0.85rem;">
-        <h4 style="margin-bottom: 0.5rem;">Lease File Locations</h4>
-        <p>KEA DHCP stores lease information in CSV format at:</p>
-        <ul style="margin-left: 1.5rem; margin-top: 0.4rem;">
-            <li><code>/var/lib/kea/kea-leases4.csv</code> (default location)</li>
-            <li><code>/var/lib/kea/dhcp4.leases</code> (alternative location)</li>
-            <li><code>/tmp/kea-leases4.csv</code> (temporary location)</li>
-        </ul>
+        <h4 style="margin-bottom: 0.5rem;">Data Source</h4>
+        <p>Leases are read live from the running KEA server via its control
+        socket (<code>lease4-get-all</code>), so releases and deletions show
+        up immediately. If the socket is unavailable the view falls back to
+        parsing <code>/var/lib/kea/kea-leases4.csv</code>.</p>
     </div>
 </div>
 
