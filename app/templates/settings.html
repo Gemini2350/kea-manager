@@ -152,6 +152,15 @@
                     </div>
 
                     <div class="form-group">
+                        <label for="color">Group:</label>
+                        <select id="color" name="color">
+                            <option value="">Auto (by name / 10.1.x / 10.2.x)</option>
+                            <option value="amber">Amber</option>
+                            <option value="blue">Blue</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
                         <label for="relay">Relay IP (giaddr):</label>
                         <input type="text" id="relay" name="relay"
                                placeholder="192.168.1.2">
@@ -209,8 +218,12 @@
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
                     <div>
                         {% set subnet_name = subnet.get('user-context', {}).get('name') %}
+                        {% set scolor = subnet_color(subnet) %}
                         <h4 style="margin-bottom: 0.4rem;">
                             {% if subnet_name %}{{ subnet_name }}{% else %}Subnet {{ subnet.id }}{% endif %}
+                            {% if scolor %}
+                            <span style="display: inline-block; margin-left: 0.35rem; padding: 0.1rem 0.55rem; border-radius: 999px; font-size: 0.68rem; font-weight: 600; vertical-align: middle; text-transform: uppercase; letter-spacing: 0.04em; {% if scolor == 'amber' %}background: rgba(245,158,11,0.14); color: #d97706; border: 1px solid rgba(245,158,11,0.4);{% else %}background: rgba(59,130,246,0.14); color: #3b82f6; border: 1px solid rgba(59,130,246,0.4);{% endif %}">{{ scolor }}</span>
+                            {% endif %}
                             <span style="color: var(--text-faint); font-weight: normal; font-size: 0.9rem;">&mdash; {{ subnet.subnet }} (id {{ subnet.id }})</span>
                         </h4>
                         {% if subnet.pools %}
@@ -222,12 +235,24 @@
                             {% endfor %}
                         {% endif %}
                     </div>
-                    <form method="POST" action="{{ url_for('delete_subnet', subnet_index=loop.index0) }}" style="display: inline;">
-                        <button type="submit" class="btn btn-danger"
-                                onclick="return confirm('Are you sure you want to delete this subnet?')">
-                            Delete
-                        </button>
-                    </form>
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        {% set explicit = subnet.get('user-context', {}).get('color', '') %}
+                        <form method="POST" action="{{ url_for('set_subnet_color', subnet_index=loop.index0) }}" style="display: inline;">
+                            <select name="color" onchange="this.form.submit()" title="Amber/Blue group for bulk reservations"
+                                    style="width: auto; padding: 0.35rem 0.5rem; font-size: 0.83rem;">
+                                <option value="auto" {% if explicit not in ['amber', 'blue', 'none'] %}selected{% endif %}>Group: Auto{% if scolor and explicit not in ['amber', 'blue'] %} ({{ scolor }}){% endif %}</option>
+                                <option value="amber" {% if explicit == 'amber' %}selected{% endif %}>Group: Amber</option>
+                                <option value="blue" {% if explicit == 'blue' %}selected{% endif %}>Group: Blue</option>
+                                <option value="none" {% if explicit == 'none' %}selected{% endif %}>Group: None</option>
+                            </select>
+                        </form>
+                        <form method="POST" action="{{ url_for('delete_subnet', subnet_index=loop.index0) }}" style="display: inline;">
+                            <button type="submit" class="btn btn-danger"
+                                    onclick="return confirm('Are you sure you want to delete this subnet?')">
+                                Delete
+                            </button>
+                        </form>
+                    </div>
                 </div>
 
                 <!-- Static Reservations -->
@@ -262,8 +287,8 @@
                                 <label for="apply-scope-{{ loop.index0 }}">Apply to:</label>
                                 <select id="apply-scope-{{ loop.index0 }}" name="apply_scope">
                                     <option value="single">This subnet only</option>
-                                    <option value="amber">All Amber subnets (10.1.x)</option>
-                                    <option value="blue">All Blue subnets (10.2.x)</option>
+                                    <option value="amber">All Amber subnets</option>
+                                    <option value="blue">All Blue subnets</option>
                                 </select>
                                 <small style="color: var(--text-muted); display: block; margin-top: 0.25rem;">
                                     For Amber/Blue, the host part (e.g. .81) is kept and rebased into each subnet's range.

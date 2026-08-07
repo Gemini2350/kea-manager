@@ -696,6 +696,11 @@ def add_subnet():
         if name:
             subnet_data["user-context"] = {"name": name}
 
+        # Optional group assignment (amber/blue), also kept in user-context
+        color = request.form.get('color', '')
+        if color in ('amber', 'blue'):
+            subnet_data.setdefault("user-context", {})["color"] = color
+
         # Relay IP(s) -- essential in relayed setups so KEA matches DHCP
         # requests (by giaddr) to this subnet. Accepts comma-separated list.
         relay_raw = (request.form.get('relay') or '').strip()
@@ -792,9 +797,18 @@ def _add_reservation_to_subnet(subnet, mac, ip, hostname, override=False):
 
 
 def _subnet_color(subnet):
-    """Classify a subnet as 'amber' or 'blue' by name, falling back to the
-    second IP octet (10.1.x = amber, 10.2.x = blue). Returns '' if unknown."""
-    name = (subnet.get('user-context', {}).get('name') or '').lower()
+    """Return a subnet's group: 'amber', 'blue' or '' (none).
+
+    An explicit assignment in user-context.color wins. Subnets without
+    one fall back to the legacy heuristics: group keyword in the name,
+    then second IP octet (10.1.x = amber, 10.2.x = blue)."""
+    uc = subnet.get('user-context') or {}
+    explicit = (uc.get('color') or '').lower()
+    if explicit == 'none':
+        return ''
+    if explicit in ('amber', 'blue'):
+        return explicit
+    name = (uc.get('name') or '').lower()
     if 'amber' in name:
         return 'amber'
     if 'blue' in name:
@@ -808,6 +822,40 @@ def _subnet_color(subnet):
     except (IndexError, AttributeError):
         pass
     return ''
+
+
+# Expose to templates so the settings page can show the effective group.
+app.jinja_env.globals['subnet_color'] = _subnet_color
+
+
+@app.route('/set-subnet-color/<int:subnet_index>', methods=['POST'])
+def set_subnet_color(subnet_index):
+    """Assign a subnet to the Amber/Blue group, or back to auto/none.
+
+    Stored in the subnet's user-context, which KEA treats as opaque
+    metadata -- no service restart needed."""
+    try:
+        config = load_config()
+        subnets = (config or {}).get("Dhcp4", {}).get("subnet4", [])
+        if not (0 <= subnet_index < len(subnets)):
+            flash('Invalid subnet index!')
+            return redirect(url_for('settings'))
+        color = request.form.get('color', '')
+        if color not in ('auto', 'amber', 'blue', 'none'):
+            flash('Invalid group!')
+            return redirect(url_for('settings'))
+        uc = subnets[subnet_index].setdefault('user-context', {})
+        if color == 'auto':
+            uc.pop('color', None)
+            if not uc:
+                del subnets[subnet_index]['user-context']
+        else:
+            uc['color'] = color
+        save_config(config)
+        flash('Subnet group updated.')
+    except Exception as e:
+        flash(f'Error updating subnet group: {str(e)}')
+    return redirect(url_for('settings'))
 
 
 @app.route('/add-reservation', methods=['POST'])
