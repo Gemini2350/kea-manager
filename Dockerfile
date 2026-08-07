@@ -8,6 +8,7 @@ RUN apk add --no-cache \
     kea-dhcp4 \
     kea-dhcp-ddns \
     kea-ctrl-agent \
+    kea-hook-lease-cmds \
     python3 \
     py3-flask \
     py3-werkzeug \
@@ -37,6 +38,11 @@ COPY config/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY config/kea-dhcp4.conf /etc/kea/kea-dhcp4.conf.default
 COPY config/kea-dhcp-ddns.conf /etc/kea/kea-dhcp-ddns.conf.default
 COPY entrypoint.sh /entrypoint.sh
+
+# The Alpine kea packages ship their own example configs in /etc/kea;
+# overwrite them so fresh volumes are seeded with ours, not the stock ones.
+RUN cp /etc/kea/kea-dhcp4.conf.default /etc/kea/kea-dhcp4.conf && \
+    cp /etc/kea/kea-dhcp-ddns.conf.default /etc/kea/kea-dhcp-ddns.conf
 
 # Set permissions
 RUN chmod +x /entrypoint.sh && \

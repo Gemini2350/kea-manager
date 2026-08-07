@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% block title %}Logs - KEA DHCP Manager{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 0.75rem;">
+        <h2>Service Logs</h2>
+        <div style="display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;">
+            <select id="log-file" onchange="loadLog()" style="width: auto;">
+                {% for f in files %}
+                <option value="{{ f }}">{{ f }}</option>
+                {% endfor %}
+            </select>
+            <select id="log-lines" onchange="loadLog()" style="width: auto;">
+                <option value="200">200 lines</option>
+                <option value="500">500 lines</option>
+                <option value="1000">1000 lines</option>
+                <option value="2000">2000 lines</option>
+            </select>
+            <button id="log-follow" class="btn btn-secondary" onclick="toggleFollow()"></button>
+            <button class="btn" onclick="loadLog()">Refresh</button>
+        </div>
+    </div>
+
+    {% if not files %}
+    <div class="alert alert-error">
+        No log files found. In the container the supervisord logs live in
+        <code>/var/log/supervisor</code>; set <code>KEA_LOG_DIR</code> to
+        point somewhere else.
+    </div>
+    {% else %}
+    <div style="margin-bottom: 0.75rem;">
+        <input type="search" id="log-search" placeholder="Filter lines..." oninput="renderLog()">
+    </div>
+    <pre id="log-output" style="background: var(--surface-2); border: 1px solid var(--border);
+        border-radius: var(--radius); padding: 1rem; max-height: 65vh; overflow: auto;
+        font-size: 0.78rem; line-height: 1.45; white-space: pre-wrap; word-break: break-all;
+        font-family: ui-monospace, SFMono-Regular, monospace;"></pre>
+    <div id="log-status" style="margin-top: 0.5rem; color: var(--text-muted); font-size: 0.85rem;"></div>
+    {% endif %}
+</div>
+
+<script>
+const REFRESH_MS = 5000;
+let follow = localStorage.getItem('logsFollow') !== 'off';
+let currentLines = [];
+let refreshTimer = null;
+
+function updateFollowUI() {
+    const btn = document.getElementById('log-follow');
+    if (btn) btn.textContent = follow ? 'Auto: On' : 'Auto: Off';
+}
+
+function toggleFollow() {
+    follow = !follow;
+    localStorage.setItem('logsFollow', follow ? 'on' : 'off');
+    updateFollowUI();
+    if (follow) loadLog();
+}
+
+function renderLog() {
+    const out = document.getElementById('log-output');
+    if (!out) return;
+    const q = (document.getElementById('log-search').value || '').toLowerCase();
+    const lines = q ? currentLines.filter(l => l.toLowerCase().includes(q)) : currentLines;
+    // Only autoscroll if the user is already at (or near) the bottom.
+    const atBottom = out.scrollTop + out.clientHeight >= out.scrollHeight - 40;
+    out.textContent = lines.join('\n') || '(empty)';
+    if (atBottom) out.scrollTop = out.scrollHeight;
+    const status = document.getElementById('log-status');
+    status.textContent = (q ? lines.length + ' of ' + currentLines.length + ' lines match'
+                            : currentLines.length + ' lines') +
+                         ' — updated ' + new Date().toLocaleTimeString();
+}
+
+async function loadLog() {
+    const fileSel = document.getElementById('log-file');
+    if (!fileSel || !fileSel.value) return;
+    const n = document.getElementById('log-lines').value;
+    try {
+        const resp = await fetch('{{ url_for('logs_data') }}?file=' +
+            encodeURIComponent(fileSel.value) + '&lines=' + n);
+        const data = await resp.json();
+        if (data.error) {
+            currentLines = ['Error: ' + data.error];
+        } else {
+            currentLines = data.lines;
+        }
+    } catch (e) {
+        currentLines = ['Error fetching log: ' + e];
+    }
+    renderLog();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    updateFollowUI();
+    loadLog().then(() => {
+        const out = document.getElementById('log-output');
+        if (out) out.scrollTop = out.scrollHeight;
+    });
+    refreshTimer = setInterval(() => { if (follow) loadLog(); }, REFRESH_MS);
+});
+</script>
+{% endblock %}

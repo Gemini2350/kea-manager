@@ -72,6 +72,12 @@
                                             data-vendor="{{ lease.vendor }}">
                                         Reserve
                                     </button>
+                                    <button type="button" class="btn btn-danger delete-lease-btn"
+                                            style="padding: 0.2rem 0.55rem; font-size: 0.8rem;"
+                                            data-ip="{{ lease.ip }}"
+                                            data-hostname="{{ lease.hostname }}">
+                                        Delete
+                                    </button>
                                 </td>
                             </tr>
                             {% endfor %}
@@ -239,6 +245,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 btn.dataset.hostname,
                 btn.dataset.vendor
             );
+        });
+    });
+    document.querySelectorAll('button.delete-lease-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const ip = btn.dataset.ip;
+            const host = btn.dataset.hostname;
+            const label = (host && host !== 'Unknown') ? ip + ' (' + host + ')' : ip;
+            if (!confirm('Delete lease ' + label + '?\n\n' +
+                         'The client keeps its IP until renewal, then requests a new lease.')) {
+                return;
+            }
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = '{{ url_for('delete_lease') }}';
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'ip_address';
+            input.value = ip;
+            form.appendChild(input);
+            document.body.appendChild(form);
+            form.submit();
         });
     });
 });

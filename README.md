@@ -7,7 +7,9 @@ A web-based management interface for ISC KEA DHCP4 server, packaged as a lightwe
 - **Web UI Management**: Modern, responsive web interface for KEA DHCP configuration
 - **Subnet Management**: Add, delete, and configure DHCP subnets with pools and options
 - **Static Reservations**: Manage MAC-to-IP static reservations
-- **Lease Monitoring**: View active DHCP leases in real-time
+- **Lease Monitoring**: View active DHCP leases in real-time, delete single
+  leases via the KEA control socket (no service restart)
+- **Log Viewer**: Live tail of the KEA/DDNS/web service logs in the browser
 - **Configuration Editor**: Direct JSON configuration editing with validation
 - **Secure Authentication**: SQLite-based user management with password reset functionality
 - **Service Control**: Restart KEA DHCP service from the web interface
@@ -129,6 +131,8 @@ Under the hood it sets a few environment variables that make the app portable:
 | `KEA_DEV`      | Dev mode: skip real `kea-dhcp4` calls; validate config structurally; no service restarts. Auto-enabled when the `kea-dhcp4` binary isn't on `PATH`. | off in Docker |
 | `KEA_ETC_DIR`  | Directory for `kea-dhcp4.conf`, `kea-dhcp-ddns.conf`, `auth.db` | `/etc/kea`   |
 | `KEA_VAR_DIR`  | Directory for the lease database                   | `/var/lib/kea`   |
+| `KEA_RUN_DIR`  | Directory of the kea4-ctrl-socket (lease delete)   | `/run/kea`       |
+| `KEA_LOG_DIR`  | Directory of the service logs for the Logs page    | `/var/log/supervisor` |
 | `OUI_CSV`      | Path to the IEEE OUI database for vendor lookup    | `/app/oui.csv`   |
 | `SECRET_KEY`   | Flask session secret                               | auto-generated   |
 

@@ -5,6 +5,7 @@ import json
 import hashlib
 import ipaddress
 import secrets
+import socket
 import sqlite3
 import threading
 import time
@@ -29,6 +30,8 @@ DDNS_CONFIG_FILE = os.path.join(KEA_ETC_DIR, 'kea-dhcp-ddns.conf')
 RESET_KEY_FILE = os.path.join(KEA_ETC_DIR, 'password_reset.key')
 SECRET_KEY_FILE = os.path.join(KEA_ETC_DIR, 'secret.key')
 LEASE_FILE = os.path.join(KEA_VAR_DIR, 'kea-leases4.csv')
+KEA_SOCKET = os.path.join(os.environ.get('KEA_RUN_DIR', '/run/kea'), 'kea4-ctrl-socket')
+LOG_DIR = os.environ.get('KEA_LOG_DIR', '/var/log/supervisor')
 OUI_CSV = os.environ.get('OUI_CSV', '/app/oui.csv')
 
 
@@ -272,6 +275,63 @@ def restart_kea_service():
         return True
     except:
         return False
+
+def kea_ctrl_command(command, arguments=None):
+    """Send a command to kea-dhcp4 via its unix control socket.
+
+    Returns the parsed response dict, or {'result': 1, 'text': ...} on
+    connection errors so callers can treat everything uniformly.
+    """
+    payload = {'command': command}
+    if arguments:
+        payload['arguments'] = arguments
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(5)
+            s.connect(KEA_SOCKET)
+            s.sendall(json.dumps(payload).encode())
+            chunks = []
+            while True:
+                try:
+                    chunk = s.recv(65536)
+                except socket.timeout:
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                # KEA closes after responding; try to parse what we have
+                # so we don't always wait for the timeout.
+                try:
+                    return json.loads(b''.join(chunks).decode())
+                except ValueError:
+                    continue
+        return json.loads(b''.join(chunks).decode())
+    except (OSError, ValueError) as e:
+        return {'result': 1, 'text': f'control socket error: {e}'}
+
+
+def _remove_lease_from_csv(ip):
+    """Dev-mode lease delete: rewrite the lease CSV without the given IP."""
+    try:
+        with open(LEASE_FILE, 'r') as f:
+            lines = f.readlines()
+        kept = [lines[0]] + [l for l in lines[1:]
+                             if l.split(',')[0] != ip]
+        with open(LEASE_FILE, 'w') as f:
+            f.writelines(kept)
+        return True
+    except Exception as e:
+        print(f"_remove_lease_from_csv: {e}")
+        return False
+
+
+def _drop_lease_from_cache(ip):
+    """Remove a deleted lease from the stale-read cache so the UI doesn't
+    resurrect it for up to TTL seconds."""
+    with _LEASE_CACHE_LOCK:
+        _LEASE_CACHE['leases'] = [l for l in _LEASE_CACHE['leases']
+                                  if l['ip'] != ip]
+
 
 def validate_config(config):
     """Validate KEA configuration.
@@ -1113,6 +1173,87 @@ def leases():
                                total=len(active_leases))
     except Exception as e:
         return render_template('leases.html', leases=[], groups=[], total=0, error=str(e))
+
+
+@app.route('/delete-lease', methods=['POST'])
+def delete_lease():
+    """Delete a single lease via the KEA control socket (lease4-del).
+
+    No service restart needed -- the lease_cmds hook removes it from the
+    running server and the memfile backend. The client keeps using its IP
+    until renewal, then goes through a fresh DISCOVER/OFFER cycle.
+    """
+    ip = (request.form.get('ip_address') or '').strip()
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        flash(f'Invalid IP address: {ip!r}')
+        return redirect(url_for('leases'))
+
+    if DEV_MODE:
+        ok = _remove_lease_from_csv(ip)
+        _drop_lease_from_cache(ip)
+        flash(f'Lease {ip} deleted (dev mode).' if ok
+              else f'Failed to delete lease {ip} (dev mode).')
+        return redirect(url_for('leases'))
+
+    resp = kea_ctrl_command('lease4-del', {'ip-address': ip})
+    result = resp.get('result')
+    if result == 0:
+        _drop_lease_from_cache(ip)
+        flash(f'Lease {ip} deleted.')
+    elif result == 3:
+        # Already gone (expired or reclaimed between page load and click).
+        _drop_lease_from_cache(ip)
+        flash(f'Lease {ip} was already gone.')
+    elif result == 2:
+        flash('Lease delete not supported: the lease_cmds hook is not '
+              'loaded. Restart the container to auto-enable it, then retry.')
+    else:
+        flash(f"Failed to delete lease {ip}: {resp.get('text', 'unknown error')}")
+    return redirect(url_for('leases'))
+
+
+@app.route('/logs')
+def logs():
+    """Service log viewer (supervisord log files)."""
+    return render_template('logs.html', files=_list_log_files())
+
+
+@app.route('/logs/data')
+def logs_data():
+    """Return the tail of one log file as JSON for the live viewer."""
+    filename = request.args.get('file', '')
+    if filename not in _list_log_files():
+        return jsonify({'error': 'unknown log file'}), 404
+    try:
+        lines = int(request.args.get('lines', 200))
+    except ValueError:
+        lines = 200
+    lines = max(50, min(lines, 2000))
+
+    path = os.path.join(LOG_DIR, filename)
+    try:
+        size = os.path.getsize(path)
+        with open(path, 'rb') as f:
+            # Generous per-line estimate; one seek instead of reading
+            # a potentially huge file.
+            f.seek(max(0, size - lines * 500))
+            data = f.read().decode('utf-8', errors='replace')
+        tail = data.splitlines()[-lines:]
+        return jsonify({'file': filename, 'lines': tail, 'size': size})
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
+
+
+def _list_log_files():
+    """Whitelist of viewable logs: plain *.log files in LOG_DIR."""
+    try:
+        return sorted(f for f in os.listdir(LOG_DIR)
+                      if f.endswith('.log')
+                      and os.path.isfile(os.path.join(LOG_DIR, f)))
+    except OSError:
+        return []
 
 
 @app.route('/reserve-lease', methods=['POST'])

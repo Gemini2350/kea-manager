@@ -13,8 +13,17 @@ cd "$(dirname "$0")"
 DEV_DIR="dev"
 ETC_DIR="$DEV_DIR/etc/kea"
 VAR_DIR="$DEV_DIR/var/lib/kea"
+LOG_DIR="$DEV_DIR/var/log/supervisor"
 
-mkdir -p "$ETC_DIR" "$VAR_DIR"
+mkdir -p "$ETC_DIR" "$VAR_DIR" "$LOG_DIR"
+
+# Optional: a fake service log so the Logs page shows something.
+if [ ! -f "$LOG_DIR/kea-dhcp4.out.log" ]; then
+    for i in $(seq 1 60); do
+        echo "INFO  [kea-dhcp4.leases] DHCP4_LEASE_ALLOC [hwtype=1 aa:bb:cc:00:00:$i] 10.1.1.$((100 + i % 100)) demo line $i"
+    done > "$LOG_DIR/kea-dhcp4.out.log"
+    echo "Seeded a demo log file"
+fi
 
 # Seed the DHCP4 config from the repo sample on first run.
 if [ ! -f "$ETC_DIR/kea-dhcp4.conf" ]; then
@@ -46,6 +55,7 @@ fi
 export KEA_DEV=1
 export KEA_ETC_DIR="$PWD/$ETC_DIR"
 export KEA_VAR_DIR="$PWD/$VAR_DIR"
+export KEA_LOG_DIR="$PWD/$LOG_DIR"
 export OUI_CSV="$PWD/app/oui.csv"   # optional; missing file just disables vendor lookup
 export SECRET_KEY="dev-secret-not-for-production"
 
