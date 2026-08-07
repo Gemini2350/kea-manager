@@ -224,8 +224,37 @@ def load_config():
     except:
         return {}
 
+def _ensure_search_domains(config):
+    """Mirror domain-name (option 15) into domain-search (option 119).
+
+    Many clients (systemd-resolved, macOS, Windows) only use option 119
+    for DNS suffix search, so a scope that sets a domain should hand it
+    out as search domain too. Applies to the global option-data and each
+    subnet; scopes that already define domain-search are left untouched.
+    """
+    def fix(options):
+        if not isinstance(options, list):
+            return
+        names = {o.get('name') for o in options if isinstance(o, dict)}
+        if 'domain-search' in names:
+            return
+        for o in options:
+            if isinstance(o, dict) and o.get('name') == 'domain-name' and o.get('data'):
+                options.append({'name': 'domain-search', 'data': o['data']})
+                return
+
+    dhcp4 = (config or {}).get('Dhcp4')
+    if not isinstance(dhcp4, dict):
+        return
+    fix(dhcp4.get('option-data'))
+    for subnet in dhcp4.get('subnet4') or []:
+        if isinstance(subnet, dict):
+            fix(subnet.get('option-data'))
+
+
 def save_config(config):
     """Save KEA DHCP configuration"""
+    _ensure_search_domains(config)
     with open(CONFIG_FILE, 'w') as f:
         json.dump(config, f, indent=2)
 
@@ -604,10 +633,12 @@ def update_settings():
             "dhcp-socket-type": "raw"
         }
 
-        # Initialize multi-threading section
+        # Initialize multi-threading section. Default to enabled: control
+        # socket commands (lease list/delete) block DHCP processing far
+        # less on a multi-threaded server.
         if "multi-threading" not in config["Dhcp4"]:
             config["Dhcp4"]["multi-threading"] = {
-                "enable-multi-threading": False
+                "enable-multi-threading": True
             }
 
         # Set authoritative mode
@@ -855,6 +886,76 @@ def set_subnet_color(subnet_index):
         flash('Subnet group updated.')
     except Exception as e:
         flash(f'Error updating subnet group: {str(e)}')
+    return redirect(url_for('settings'))
+
+
+@app.route('/edit-subnet/<int:subnet_index>', methods=['POST'])
+def edit_subnet(subnet_index):
+    """Edit an existing subnet in place.
+
+    Covers name, CIDR, relay, pool and the common options (gateway, DNS,
+    domain). Reservations, the subnet id and any options not on the form
+    are preserved. Empty DNS/domain fall back to the global settings.
+    """
+    try:
+        config = load_config()
+        subnets = (config or {}).get("Dhcp4", {}).get("subnet4", [])
+        if not (0 <= subnet_index < len(subnets)):
+            flash('Invalid subnet index!')
+            return redirect(url_for('settings'))
+        s = subnets[subnet_index]
+
+        raw_subnet = (request.form.get('subnet') or '').strip()
+        if raw_subnet:
+            s['subnet'] = raw_subnet if '/' in raw_subnet else raw_subnet + '/24'
+
+        pool_start = (request.form.get('pool_start') or '').strip()
+        pool_end = (request.form.get('pool_end') or '').strip()
+        if pool_start and pool_end:
+            s['pools'] = [{'pool': f"{pool_start}-{pool_end}"}]
+
+        name = (request.form.get('name') or '').strip()
+        uc = s.get('user-context') or {}
+        if name:
+            uc['name'] = name
+        else:
+            uc.pop('name', None)
+        if uc:
+            s['user-context'] = uc
+        else:
+            s.pop('user-context', None)
+
+        relay = (request.form.get('relay') or '').strip()
+        if relay:
+            ips = [r.strip() for r in relay.split(',') if r.strip()]
+            s['relay'] = {'ip-addresses': ips}
+        else:
+            s.pop('relay', None)
+
+        # Replace the form-managed options, keep any others untouched.
+        def set_option(options, opt_name, data):
+            options[:] = [o for o in options if o.get('name') != opt_name]
+            if data:
+                options.append({'name': opt_name, 'data': data})
+
+        options = s.setdefault('option-data', [])
+        set_option(options, 'routers', (request.form.get('gateway') or '').strip())
+        set_option(options, 'domain-name-servers',
+                   (request.form.get('dns_servers') or '').strip())
+        domain = (request.form.get('domain_name') or '').strip()
+        set_option(options, 'domain-name', domain)
+        set_option(options, 'domain-search', domain)  # keep option 119 in sync
+        if not options:
+            s.pop('option-data', None)
+
+        if validate_config(config):
+            save_config(config)
+            restart_kea_service()
+            flash('Subnet updated successfully!')
+        else:
+            flash('Invalid subnet configuration!')
+    except Exception as e:
+        flash(f'Error updating subnet: {str(e)}')
     return redirect(url_for('settings'))
 
 

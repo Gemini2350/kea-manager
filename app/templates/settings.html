@@ -246,6 +246,7 @@
                                 <option value="none" {% if explicit == 'none' %}selected{% endif %}>Group: None</option>
                             </select>
                         </form>
+                        <button type="button" class="btn" onclick="toggleEditSubnet({{ loop.index0 }})">Edit</button>
                         <form method="POST" action="{{ url_for('delete_subnet', subnet_index=loop.index0) }}" style="display: inline;">
                             <button type="submit" class="btn btn-danger"
                                     onclick="return confirm('Are you sure you want to delete this subnet?')">
@@ -253,6 +254,60 @@
                             </button>
                         </form>
                     </div>
+                </div>
+
+                <!-- Edit Subnet Form (hidden by default) -->
+                {% set opts = {} %}
+                {% for o in subnet.get('option-data', []) %}{% if opts.update({o.get('name'): o.get('data')}) %}{% endif %}{% endfor %}
+                {% set pool0 = subnet.pools[0].pool if subnet.pools else '' %}
+                {% set pool_parts = pool0.split('-') %}
+                <div id="edit-subnet-{{ loop.index0 }}" style="display: none; margin-bottom: 1.5rem; padding: 1.25rem; background: var(--surface-2); border-radius: 12px;">
+                    <h5 style="margin-bottom: 1rem; color: var(--text);">Edit Subnet</h5>
+                    <form method="POST" action="{{ url_for('edit_subnet', subnet_index=loop.index0) }}">
+                        <div class="grid">
+                            <div class="form-group">
+                                <label>Name (optional):</label>
+                                <input type="text" name="name" value="{{ subnet_name or '' }}">
+                            </div>
+                            <div class="form-group">
+                                <label>Subnet (CIDR):</label>
+                                <input type="text" name="subnet" required value="{{ subnet.subnet }}">
+                            </div>
+                            <div class="form-group">
+                                <label>Relay IP (giaddr):</label>
+                                <input type="text" name="relay" value="{{ subnet.get('relay', {}).get('ip-addresses', []) | join(', ') }}">
+                            </div>
+                            <div class="form-group">
+                                <label>Pool Start IP:</label>
+                                <input type="text" name="pool_start" required value="{{ pool_parts[0] }}">
+                            </div>
+                            <div class="form-group">
+                                <label>Pool End IP:</label>
+                                <input type="text" name="pool_end" required value="{{ pool_parts[-1] }}">
+                            </div>
+                            <div class="form-group">
+                                <label>Gateway IP:</label>
+                                <input type="text" name="gateway" value="{{ opts.get('routers', '') }}">
+                            </div>
+                            <div class="form-group">
+                                <label>DNS Servers (comma-separated):</label>
+                                <input type="text" name="dns_servers" value="{{ opts.get('domain-name-servers', '') }}">
+                            </div>
+                            <div class="form-group">
+                                <label>Domain Name:</label>
+                                <input type="text" name="domain_name" value="{{ opts.get('domain-name', '') }}">
+                            </div>
+                        </div>
+                        <p style="color: var(--text-muted); font-size: 0.82rem; margin-bottom: 1rem;">
+                            Reservations and the subnet id are kept. Leave DNS/Domain empty to
+                            inherit the global settings; the domain is also handed out as DNS
+                            search domain. Saving restarts the DHCP service.
+                        </p>
+                        <div style="text-align: center;">
+                            <button type="submit" class="btn btn-success">Save Changes</button>
+                            <button type="button" class="btn" onclick="toggleEditSubnet({{ loop.index0 }})">Cancel</button>
+                        </div>
+                    </form>
                 </div>
 
                 <!-- Static Reservations -->
@@ -371,6 +426,11 @@ function toggleSecret() {
 
 function toggleAddSubnet() {
     const form = document.getElementById('add-subnet-form');
+    form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+function toggleEditSubnet(subnetIndex) {
+    const form = document.getElementById('edit-subnet-' + subnetIndex);
     form.style.display = form.style.display === 'none' ? 'block' : 'none';
 }
 
