@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- KEA DHCP Manager favicon: a DHCP server (orange, kea-parrot underwing)
+       serving three clients (white), star topology on kea-green. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#159b6d"/>
+      <stop offset="1" stop-color="#0a5d44"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <g stroke="#ffffff" stroke-opacity="0.85" stroke-width="3.5" stroke-linecap="round">
+    <line x1="32" y1="33" x2="32" y2="14"/>
+    <line x1="32" y1="33" x2="15.5" y2="42.5"/>
+    <line x1="32" y1="33" x2="48.5" y2="42.5"/>
+  </g>
+  <circle cx="32" cy="14" r="6" fill="#ffffff"/>
+  <circle cx="15.5" cy="42.5" r="6" fill="#ffffff"/>
+  <circle cx="48.5" cy="42.5" r="6" fill="#ffffff"/>
+  <circle cx="32" cy="33" r="9.5" fill="#fb923c" stroke="#ffffff" stroke-width="3"/>
+</svg>
