@@ -1075,6 +1075,11 @@ def import_config():
 _LEASE_CACHE = {'leases': [], 'ts': 0.0}
 _LEASE_CACHE_LOCK = threading.Lock()
 _LEASE_CACHE_TTL = 30  # seconds; how long a previous good result is reused
+# Serve from cache without asking KEA at all while younger than this.
+# lease4-get-all dumps the whole lease DB and blocks DHCP processing on a
+# single-threaded server, so several open tabs / dashboard + leases page
+# must not each trigger their own dump.
+_LEASE_CACHE_FRESH_TTL = 10
 
 
 def _read_lease_csv(path):
@@ -1167,6 +1172,11 @@ def parse_lease_file():
     cached, returns the cached result -- KEA briefly empties the file
     during rotations and we don't want the UI to flicker to 'no leases'.
     """
+    with _LEASE_CACHE_LOCK:
+        if (_LEASE_CACHE['leases']
+                and time.time() - _LEASE_CACHE['ts'] < _LEASE_CACHE_FRESH_TTL):
+            return _LEASE_CACHE['leases']
+
     fresh = None
     if not DEV_MODE:
         # Primary source: the running server via lease4-get-all. The CSV
