@@ -18,6 +18,11 @@ if [ ! -f "/etc/kea/kea-dhcp-ddns.conf" ]; then
     chown kea:kea /etc/kea/kea-dhcp-ddns.conf
 fi
 
+# Bind-mounted volumes are created root-owned by Docker on first start;
+# the kea-dhcp4/ddns services run as the unprivileged kea user and need
+# to read /etc/kea and write the lease database in /var/lib/kea.
+chown -R kea:kea /etc/kea /var/lib/kea
+
 # Validate configuration
 echo "Validating KEA DHCP4 configuration..."
 kea-dhcp4 -t /etc/kea/kea-dhcp4.conf
