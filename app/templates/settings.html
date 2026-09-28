@@ -139,6 +139,42 @@
         </form>
     </div>
 
+    <!-- Subnet Groups -->
+    <div class="card" style="margin-bottom: 2rem;">
+        <h3 style="color: var(--text); margin-bottom: 0.5rem;">Subnet Groups</h3>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem;">
+            Groups tag subnets for bulk reservations ("apply to all &hellip; subnets")
+            and color their badges. Renaming or deleting a group updates the
+            assigned subnets automatically.
+        </p>
+        {% for g in groups %}
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; flex-wrap: wrap;">
+            <form method="POST" action="{{ url_for('save_group') }}" style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="hidden" name="old_name" value="{{ g.name }}">
+                <input type="color" name="color" value="{{ g.color }}" title="Group color"
+                       style="width: 2.4rem; height: 2rem; padding: 0.15rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); cursor: pointer;">
+                <input type="text" name="name" value="{{ g.name }}" required
+                       style="width: 12rem;">
+                <button type="submit" class="btn btn-secondary">Save</button>
+            </form>
+            <form method="POST" action="{{ url_for('delete_group') }}" style="display: inline;">
+                <input type="hidden" name="name" value="{{ g.name }}">
+                <button type="submit" class="btn btn-danger"
+                        onclick="return confirm('Delete group {{ g.name }}? Assigned subnets keep working, just without a group.')">
+                    Delete
+                </button>
+            </form>
+        </div>
+        {% endfor %}
+        <form method="POST" action="{{ url_for('save_group') }}" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap;">
+            <input type="color" name="color" value="#10b981" title="Group color"
+                   style="width: 2.4rem; height: 2rem; padding: 0.15rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); cursor: pointer;">
+            <input type="text" name="name" placeholder="New group name" required
+                   style="width: 12rem;">
+            <button type="submit" class="btn btn-success">Add Group</button>
+        </form>
+    </div>
+
     <!-- Subnet Management -->
     <div class="card" style="margin-bottom: 2rem;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
@@ -164,11 +200,12 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="color">Group:</label>
-                        <select id="color" name="color">
-                            <option value="">Auto (by name / 10.1.x / 10.2.x)</option>
-                            <option value="amber">Amber</option>
-                            <option value="blue">Blue</option>
+                        <label for="group">Group:</label>
+                        <select id="group" name="group">
+                            <option value="">None</option>
+                            {% for g in groups %}
+                            <option value="{{ g.name }}">{{ g.name }}</option>
+                            {% endfor %}
                         </select>
                     </div>
 
@@ -233,11 +270,12 @@
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
                     <div>
                         {% set subnet_name = subnet.get('user-context', {}).get('name') %}
-                        {% set scolor = subnet_color(subnet) %}
+                        {% set sgroup = subnet_group(subnet) %}
+                        {% set gcolor = group_color(sgroup, groups) if sgroup else '' %}
                         <h4 style="margin-bottom: 0.4rem;">
                             {% if subnet_name %}{{ subnet_name }}{% else %}Subnet {{ subnet.id }}{% endif %}
-                            {% if scolor %}
-                            <span style="display: inline-block; margin-left: 0.35rem; padding: 0.1rem 0.55rem; border-radius: 999px; font-size: 0.68rem; font-weight: 600; vertical-align: middle; text-transform: uppercase; letter-spacing: 0.04em; {% if scolor == 'amber' %}background: rgba(245,158,11,0.14); color: #d97706; border: 1px solid rgba(245,158,11,0.4);{% else %}background: rgba(59,130,246,0.14); color: #3b82f6; border: 1px solid rgba(59,130,246,0.4);{% endif %}">{{ scolor }}</span>
+                            {% if sgroup %}
+                            <span style="display: inline-block; margin-left: 0.35rem; padding: 0.1rem 0.55rem; border-radius: 999px; font-size: 0.68rem; font-weight: 600; vertical-align: middle; text-transform: uppercase; letter-spacing: 0.04em; background: {{ gcolor }}24; color: {{ gcolor }}; border: 1px solid {{ gcolor }}66;">{{ sgroup }}</span>
                             {% endif %}
                             <span style="color: var(--text-faint); font-weight: normal; font-size: 0.9rem;">&mdash; {{ subnet.subnet }} (id {{ subnet.id }})</span>
                         </h4>
@@ -251,14 +289,13 @@
                         {% endif %}
                     </div>
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        {% set explicit = subnet.get('user-context', {}).get('color', '') %}
-                        <form method="POST" action="{{ url_for('set_subnet_color', subnet_index=loop.index0) }}" style="display: inline;">
-                            <select name="color" onchange="this.form.submit()" title="Amber/Blue group for bulk reservations"
+                        <form method="POST" action="{{ url_for('set_subnet_group', subnet_index=loop.index0) }}" style="display: inline;">
+                            <select name="group" onchange="this.form.submit()" title="Group for bulk reservations"
                                     style="width: auto; padding: 0.35rem 0.5rem; font-size: 0.83rem;">
-                                <option value="auto" {% if explicit not in ['amber', 'blue', 'none'] %}selected{% endif %}>Group: Auto{% if scolor and explicit not in ['amber', 'blue'] %} ({{ scolor }}){% endif %}</option>
-                                <option value="amber" {% if explicit == 'amber' %}selected{% endif %}>Group: Amber</option>
-                                <option value="blue" {% if explicit == 'blue' %}selected{% endif %}>Group: Blue</option>
-                                <option value="none" {% if explicit == 'none' %}selected{% endif %}>Group: None</option>
+                                <option value="" {% if not sgroup %}selected{% endif %}>Group: None</option>
+                                {% for g in groups %}
+                                <option value="{{ g.name }}" {% if sgroup == g.name %}selected{% endif %}>Group: {{ g.name }}</option>
+                                {% endfor %}
                             </select>
                         </form>
                         <button type="button" class="btn" onclick="toggleEditSubnet({{ loop.index0 }})">Edit</button>
@@ -365,8 +402,9 @@
                                 <label for="apply-scope-{{ loop.index0 }}">Apply to:</label>
                                 <select id="apply-scope-{{ loop.index0 }}" name="apply_scope">
                                     <option value="single">This subnet only</option>
-                                    <option value="amber">All Amber subnets</option>
-                                    <option value="blue">All Blue subnets</option>
+                                    {% for g in groups %}
+                                    <option value="{{ g.name }}">All {{ g.name }} subnets</option>
+                                    {% endfor %}
                                 </select>
                                 <small style="color: var(--text-muted); display: block; margin-top: 0.25rem;">
                                     For Amber/Blue, the host part (e.g. .81) is kept and rebased into each subnet's range.

@@ -2,6 +2,7 @@
 import os
 import csv
 import json
+import re
 import hashlib
 import ipaddress
 import secrets
@@ -29,6 +30,7 @@ CONFIG_FILE = os.path.join(KEA_ETC_DIR, 'kea-dhcp4.conf')
 DDNS_CONFIG_FILE = os.path.join(KEA_ETC_DIR, 'kea-dhcp-ddns.conf')
 RESET_KEY_FILE = os.path.join(KEA_ETC_DIR, 'password_reset.key')
 SECRET_KEY_FILE = os.path.join(KEA_ETC_DIR, 'secret.key')
+MANAGER_FILE = os.path.join(KEA_ETC_DIR, 'manager.json')
 LEASE_FILE = os.path.join(KEA_VAR_DIR, 'kea-leases4.csv')
 KEA_SOCKET = os.path.join(os.environ.get('KEA_RUN_DIR', '/run/kea'), 'kea4-ctrl-socket')
 LOG_DIR = os.environ.get('KEA_LOG_DIR', '/var/log/supervisor')
@@ -534,7 +536,8 @@ def settings():
     ddns = load_ddns_config()
     # Flatten the DDNS settings into a simple dict for the template.
     ddns_view = _ddns_view(config, ddns)
-    return render_template('settings.html', config=config, ddns=ddns_view)
+    return render_template('settings.html', config=config, ddns=ddns_view,
+                           groups=get_groups())
 
 
 def _ddns_view(dhcp4_cfg, ddns_cfg):
@@ -790,10 +793,10 @@ def add_subnet():
         if name:
             subnet_data["user-context"] = {"name": name}
 
-        # Optional group assignment (amber/blue), also kept in user-context
-        color = request.form.get('color', '')
-        if color in ('amber', 'blue'):
-            subnet_data.setdefault("user-context", {})["color"] = color
+        # Optional group assignment, also kept in user-context
+        group = (request.form.get('group') or '').strip()
+        if group and group in {g['name'] for g in get_groups()}:
+            subnet_data.setdefault("user-context", {})["group"] = group
 
         # Relay IP(s) -- essential in relayed setups so KEA matches DHCP
         # requests (by giaddr) to this subnet. Accepts comma-separated list.
@@ -893,12 +896,10 @@ def _add_reservation_to_subnet(subnet, mac, ip, hostname, override=False):
     return 'added'
 
 
-def _subnet_color(subnet):
-    """Return a subnet's group: 'amber', 'blue' or '' (none).
-
-    An explicit assignment in user-context.color wins. Subnets without
-    one fall back to the legacy heuristics: group keyword in the name,
-    then second IP octet (10.1.x = amber, 10.2.x = blue)."""
+def _legacy_subnet_color(subnet):
+    """Legacy amber/blue detection, only used to migrate old configs:
+    explicit user-context.color, group keyword in the name, then the
+    second IP octet (10.1.x = amber, 10.2.x = blue)."""
     uc = subnet.get('user-context') or {}
     explicit = (uc.get('color') or '').lower()
     if explicit == 'none':
@@ -921,13 +922,95 @@ def _subnet_color(subnet):
     return ''
 
 
-# Expose to templates so the settings page can show the effective group.
-app.jinja_env.globals['subnet_color'] = _subnet_color
+def load_manager_settings():
+    """App-own settings (group definitions), stored next to the KEA
+    config in the /etc/kea volume. Returns None when not created yet."""
+    try:
+        with open(MANAGER_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return None
 
 
-@app.route('/set-subnet-color/<int:subnet_index>', methods=['POST'])
-def set_subnet_color(subnet_index):
-    """Assign a subnet to the Amber/Blue group, or back to auto/none.
+def save_manager_settings(data):
+    with open(MANAGER_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def _migrate_groups():
+    """One-time migration to free-form groups.
+
+    Materializes the legacy amber/blue classification into explicit
+    user-context.group entries, creates the matching group definitions
+    and drops the old color keys. From then on membership is only ever
+    explicit."""
+    defaults = {'amber': '#d97706', 'blue': '#3b82f6'}
+    used = set()
+    config = load_config()
+    changed = False
+    for s in (config or {}).get('Dhcp4', {}).get('subnet4') or []:
+        uc = s.get('user-context') or {}
+        if uc.get('group'):
+            used.add(uc['group'])
+        else:
+            eff = _legacy_subnet_color(s)
+            if eff:
+                uc['group'] = eff.title()
+                s['user-context'] = uc
+                used.add(eff.title())
+                changed = True
+        if uc.pop('color', None) is not None:
+            changed = True
+    ms = {'groups': [{'name': n.title(), 'color': c}
+                     for n, c in defaults.items() if n.title() in used]}
+    try:
+        save_manager_settings(ms)
+        if changed:
+            save_config(config)
+    except OSError as e:
+        print(f"_migrate_groups: cannot persist ({e})")
+    return ms
+
+
+def get_groups():
+    """List of defined groups: [{'name': ..., 'color': '#rrggbb'}, ...]."""
+    ms = load_manager_settings()
+    if ms is None:
+        ms = _migrate_groups()
+    groups = ms.get('groups', [])
+    return [g for g in groups if isinstance(g, dict) and g.get('name')]
+
+
+def subnet_group(subnet):
+    """The group a subnet belongs to ('' = none). Explicit only; the
+    color key still maps for configs imported from old versions."""
+    uc = subnet.get('user-context') or {}
+    if uc.get('group'):
+        return uc['group']
+    legacy = (uc.get('color') or '').lower()
+    if legacy in ('amber', 'blue'):
+        return legacy.title()
+    return ''
+
+
+def group_color(name, groups=None):
+    for g in (groups if groups is not None else get_groups()):
+        if g.get('name') == name:
+            return g.get('color') or '#888888'
+    return '#888888'
+
+
+app.jinja_env.globals['subnet_group'] = subnet_group
+app.jinja_env.globals['get_groups'] = get_groups
+app.jinja_env.globals['group_color'] = group_color
+
+def _valid_hex_color(value):
+    return bool(re.match(r'^#[0-9a-fA-F]{6}$', value or ''))
+
+
+@app.route('/set-subnet-group/<int:subnet_index>', methods=['POST'])
+def set_subnet_group(subnet_index):
+    """Assign a subnet to a group (empty = none).
 
     Stored in the subnet's user-context, which KEA treats as opaque
     metadata -- no service restart needed."""
@@ -937,21 +1020,95 @@ def set_subnet_color(subnet_index):
         if not (0 <= subnet_index < len(subnets)):
             flash('Invalid subnet index!')
             return redirect(url_for('settings'))
-        color = request.form.get('color', '')
-        if color not in ('auto', 'amber', 'blue', 'none'):
-            flash('Invalid group!')
+        group = (request.form.get('group') or '').strip()
+        if group and group not in {g['name'] for g in get_groups()}:
+            flash('Unknown group!')
             return redirect(url_for('settings'))
         uc = subnets[subnet_index].setdefault('user-context', {})
-        if color == 'auto':
-            uc.pop('color', None)
-            if not uc:
-                del subnets[subnet_index]['user-context']
+        uc.pop('color', None)
+        if group:
+            uc['group'] = group
         else:
-            uc['color'] = color
+            uc.pop('group', None)
+        if not uc:
+            del subnets[subnet_index]['user-context']
         save_config(config)
         flash('Subnet group updated.')
     except Exception as e:
         flash(f'Error updating subnet group: {str(e)}')
+    return redirect(url_for('settings'))
+
+
+@app.route('/groups/save', methods=['POST'])
+def save_group():
+    """Create a group, or update an existing one (rename / recolor).
+    Renames follow into every subnet's user-context.group."""
+    try:
+        old_name = (request.form.get('old_name') or '').strip()
+        name = (request.form.get('name') or '').strip()
+        color = (request.form.get('color') or '').strip()
+        if not name or name.lower() == 'single':
+            flash('Invalid group name!')
+            return redirect(url_for('settings'))
+        if not _valid_hex_color(color):
+            color = '#888888'
+        groups = get_groups()
+        names = {g['name'] for g in groups}
+        if old_name:
+            if old_name not in names:
+                flash('Unknown group!')
+                return redirect(url_for('settings'))
+            if name != old_name and name in names:
+                flash('A group with that name already exists!')
+                return redirect(url_for('settings'))
+            for g in groups:
+                if g['name'] == old_name:
+                    g['name'] = name
+                    g['color'] = color
+            if name != old_name:
+                config = load_config()
+                changed = False
+                for s in (config or {}).get('Dhcp4', {}).get('subnet4') or []:
+                    uc = s.get('user-context') or {}
+                    if uc.get('group') == old_name:
+                        uc['group'] = name
+                        changed = True
+                if changed:
+                    save_config(config)
+            flash('Group updated.')
+        else:
+            if name in names:
+                flash('A group with that name already exists!')
+                return redirect(url_for('settings'))
+            groups.append({'name': name, 'color': color})
+            flash('Group added.')
+        save_manager_settings({'groups': groups})
+    except Exception as e:
+        flash(f'Error saving group: {str(e)}')
+    return redirect(url_for('settings'))
+
+
+@app.route('/groups/delete', methods=['POST'])
+def delete_group():
+    """Delete a group and clear it from all subnets."""
+    try:
+        name = (request.form.get('name') or '').strip()
+        groups = [g for g in get_groups() if g['name'] != name]
+        save_manager_settings({'groups': groups})
+        config = load_config()
+        changed = False
+        for s in (config or {}).get('Dhcp4', {}).get('subnet4') or []:
+            uc = s.get('user-context') or {}
+            if uc.get('group') == name:
+                uc.pop('group', None)
+                if not uc:
+                    s.pop('user-context', None)
+                changed = True
+        if changed:
+            save_config(config)
+        flash('Group deleted.')
+    except Exception as e:
+        flash(f'Error deleting group: {str(e)}')
     return redirect(url_for('settings'))
 
 
@@ -1028,8 +1185,8 @@ def edit_subnet(subnet_index):
 
 @app.route('/add-reservation', methods=['POST'])
 def add_reservation():
-    """Add static IP reservation to one subnet, or to all Amber / all Blue
-    subnets at once.
+    """Add static IP reservation to one subnet, or to every subnet of a
+    group at once.
 
     For multi-subnet scopes the host portion of the entered IP is re-based
     into each subnet's network (e.g. .81 entered in 10.1.1.0/24 becomes
@@ -1041,7 +1198,7 @@ def add_reservation():
         mac = (request.form.get('mac_address') or '').strip().lower()
         ip = (request.form.get('ip_address') or '').strip()
         hostname = (request.form.get('hostname') or '').strip()
-        scope = request.form.get('apply_scope', 'single')  # single | amber | blue
+        scope = request.form.get('apply_scope', 'single')  # 'single' or a group name
         override = request.form.get('override') == 'on'
 
         if not (config and "Dhcp4" in config and "subnet4" in config["Dhcp4"]):
@@ -1069,7 +1226,7 @@ def add_reservation():
                 flash('Invalid reservation configuration!')
             return redirect(url_for('settings'))
 
-        # --- multi-subnet: all Amber or all Blue ---
+        # --- multi-subnet: every subnet of the chosen group ---
         # Derive the host offset from the entered IP relative to its OWN /prefix
         # network (using the starting subnet's prefix length), so it works no
         # matter which subnet's form the user opened.
@@ -1084,7 +1241,7 @@ def add_reservation():
 
         added, skipped = [], []
         for s in subnets:
-            if _subnet_color(s) != scope:
+            if subnet_group(s) != scope:
                 continue
             try:
                 net = ipaddress.ip_network(s.get('subnet', ''), strict=False)
@@ -1484,11 +1641,13 @@ def leases():
         return render_template('leases.html',
                                leases=active_leases,
                                groups=groups,
+                               subnet_groups=get_groups(),
                                total=len(active_leases),
                                status=status, uptime=uptime,
                                config_file=CONFIG_FILE)
     except Exception as e:
         return render_template('leases.html', leases=[], groups=[], total=0,
+                               subnet_groups=get_groups(),
                                status=status, uptime=uptime,
                                config_file=CONFIG_FILE, error=str(e))
 
@@ -1580,8 +1739,7 @@ def reserve_lease():
 
     Scope:
       single -> only the subnet that contains the IP (default)
-      amber  -> all Amber subnets, host part re-based into each
-      blue   -> all Blue subnets, host part re-based into each
+      <group> -> all subnets of that group, host part re-based into each
 
     Rejects duplicates, then restarts DHCP so the change takes effect.
     """
@@ -1589,7 +1747,7 @@ def reserve_lease():
         ip = (request.form.get('ip_address') or '').strip()
         mac = (request.form.get('mac_address') or '').strip().lower()
         hostname = (request.form.get('hostname') or '').strip()
-        scope = request.form.get('apply_scope', 'single')  # single | amber | blue
+        scope = request.form.get('apply_scope', 'single')  # 'single' or a group name
         override = request.form.get('override') == 'on'
 
         # Don't store the placeholder hostname the lease parser uses.
@@ -1648,12 +1806,12 @@ def reserve_lease():
                       + f' in {name}. KEA was restarted.')
             return redirect(url_for('leases'))
 
-        # --- multi-subnet (amber / blue): keep host part, rebase per subnet ---
+        # --- multi-subnet (group): keep host part, rebase per subnet ---
         host_id = int(ip_obj) - int(source_net.network_address)
 
         added, skipped = [], []
         for s in subnets:
-            if _subnet_color(s) != scope:
+            if subnet_group(s) != scope:
                 continue
             try:
                 net = ipaddress.ip_network(s.get('subnet', ''), strict=False)
