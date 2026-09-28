@@ -434,9 +434,8 @@ def require_auth():
 
 @app.route('/')
 def index():
-    """Main dashboard"""
-    config = load_config()
-    return render_template('dashboard.html', config=config)
+    """Start page: the live leases view."""
+    return redirect(url_for('leases'))
 
 @app.route('/setup', methods=['GET', 'POST'])
 def setup():
@@ -474,7 +473,7 @@ def login():
                     os.unlink(RESET_KEY_FILE)
             except:
                 pass
-            return redirect(url_for('index'))
+            return redirect(url_for('leases'))
         else:
             flash('Invalid credentials')
 
