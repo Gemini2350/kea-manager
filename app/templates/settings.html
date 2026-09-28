@@ -20,6 +20,18 @@
                        placeholder="*, eth0, wlan0">
             </div>
 
+            <div class="form-group">
+                <label for="g-domain">Main Domain:</label>
+                <input type="text" id="g-domain" name="domain_name"
+                       value="{{ main_domain(config) }}"
+                       placeholder="example.lan">
+                <small style="color: var(--text-muted); display: block; margin-top: 0.25rem;">
+                    Handed out as domain and DNS search domain to every subnet without
+                    its own domain. Subnet subdomains (e.g. <code>studio1</code>)
+                    derive from it and move along when it changes.
+                </small>
+            </div>
+
             <div class="grid">
                 <div class="form-group">
                     <label for="renew_timer">Renew Timer (seconds):</label>
@@ -191,9 +203,9 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="domain_name">Domain Name:</label>
+                        <label for="domain_name">Domain / Subdomain:</label>
                         <input type="text" id="domain_name" name="domain_name"
-                               placeholder="local">
+                               placeholder="studio1">
                     </div>
                 </div>
                 <p style="color: var(--text-muted); font-size: 0.82rem; margin-bottom: 1rem;">
@@ -201,6 +213,9 @@
                     (typically the router in the target subnet). Required when clients
                     reach KEA through a relay rather than sitting on the same L2 segment.
                     Leave DNS/Domain empty to inherit the global settings.
+                    A domain without a dot becomes a subdomain of the main domain
+                    (e.g. <code>studio1</code>{% if main_domain(config) %} &rarr; <code>studio1.{{ main_domain(config) }}</code>{% endif %});
+                    with a dot it is used as-is.
                 </p>
 
                 <div style="text-align: center;">
@@ -294,14 +309,22 @@
                                 <input type="text" name="dns_servers" value="{{ opts.get('domain-name-servers', '') }}">
                             </div>
                             <div class="form-group">
-                                <label>Domain Name:</label>
-                                <input type="text" name="domain_name" value="{{ opts.get('domain-name', '') }}">
+                                <label>Domain / Subdomain:</label>
+                                {% set mdom = main_domain(config) %}
+                                {% set sdom = opts.get('domain-name', '') %}
+                                {% set sprefix = sdom[:-(mdom|length + 1)] if mdom and sdom.endswith('.' + mdom) else '' %}
+                                <input type="text" name="domain_name"
+                                       value="{{ sprefix if sprefix and '.' not in sprefix else sdom }}"
+                                       placeholder="studio1">
                             </div>
                         </div>
                         <p style="color: var(--text-muted); font-size: 0.82rem; margin-bottom: 1rem;">
                             Reservations and the subnet id are kept. Leave DNS/Domain empty to
                             inherit the global settings; the domain is also handed out as DNS
-                            search domain. Saving restarts the DHCP service.
+                            search domain and used as DDNS suffix. A domain without a dot
+                            becomes a subdomain of the main domain
+                            (e.g. <code>studio1</code>{% if main_domain(config) %} &rarr; <code>studio1.{{ main_domain(config) }}</code>{% endif %}).
+                            Saving restarts the DHCP service.
                         </p>
                         <div style="text-align: center;">
                             <button type="submit" class="btn btn-success">Save Changes</button>

@@ -224,6 +224,46 @@ def load_config():
     except:
         return {}
 
+def _get_option(options, name):
+    """Value of option `name` from an option-data list, or ''."""
+    for o in options or []:
+        if isinstance(o, dict) and o.get('name') == name:
+            return o.get('data', '') or ''
+    return ''
+
+
+def _set_option(options, name, data):
+    """Replace option `name` in an option-data list; empty data removes it."""
+    options[:] = [o for o in options if o.get('name') != name]
+    if data:
+        options.append({'name': name, 'data': data})
+
+
+def main_domain(config):
+    """The global domain-name -- the main domain that zone subdomains
+    derive from."""
+    dhcp4 = (config or {}).get('Dhcp4', {})
+    return _get_option(dhcp4.get('option-data'), 'domain-name')
+
+
+app.jinja_env.globals['main_domain'] = main_domain
+
+
+def _resolve_zone_domain(value, main):
+    """Resolve a subnet form's domain field into a FQDN.
+
+    A value without a dot is a subdomain of the main domain
+    ('studio1' -> 'studio1.<main>'); a value containing a dot is used
+    as-is. Returns '' for empty input (subnet inherits the global domain).
+    """
+    value = (value or '').strip().strip('.')
+    if not value:
+        return ''
+    if '.' not in value and main:
+        return f"{value}.{main}"
+    return value
+
+
 def _ensure_search_domains(config):
     """Mirror domain-name (option 15) into domain-search (option 119).
 
@@ -633,6 +673,29 @@ def update_settings():
             "dhcp-socket-type": "raw"
         }
 
+        # Main domain: handed out globally as domain-name + domain-search;
+        # zone subdomains ('studio1' -> studio1.<main>) derive from it.
+        gopts = config["Dhcp4"].setdefault('option-data', [])
+        old_main = _get_option(gopts, 'domain-name')
+        new_main = (request.form.get('domain_name') or '').strip().strip('.')
+        _set_option(gopts, 'domain-name', new_main)
+        _set_option(gopts, 'domain-search', new_main)
+        if not gopts:
+            config["Dhcp4"].pop('option-data', None)
+
+        # Re-base zone domains that were derived from the old main domain
+        # (studio1.old.lan -> studio1.new.lan), incl. DDNS suffixes.
+        if old_main and new_main and old_main != new_main:
+            suffix = '.' + old_main
+            for s in config["Dhcp4"].get('subnet4') or []:
+                for o in s.get('option-data') or []:
+                    if (o.get('name') in ('domain-name', 'domain-search')
+                            and (o.get('data', '') or '').endswith(suffix)):
+                        o['data'] = o['data'][:-len(old_main)] + new_main
+                qs = s.get('ddns-qualifying-suffix', '')
+                if qs.endswith(suffix):
+                    s['ddns-qualifying-suffix'] = qs[:-len(old_main)] + new_main
+
         # Initialize multi-threading section. Default to enabled: control
         # socket commands (lease list/delete) block DHCP processing far
         # less on a multi-threaded server.
@@ -682,6 +745,7 @@ def update_settings():
 
         if validate_config(config):
             save_config(config)
+            restart_kea_service()
             flash('Settings updated successfully!')
         else:
             flash('Configuration validation failed!')
@@ -754,12 +818,15 @@ def add_subnet():
                 "data": request.form.get('dns_servers')
             })
 
-        # Add domain name if provided
-        if request.form.get('domain_name'):
-            subnet_data["option-data"].append({
-                "name": "domain-name",
-                "data": request.form.get('domain_name')
-            })
+        # Domain: a value without a dot becomes a subdomain of the main
+        # domain (zone 'studio1' -> studio1.<main>); DDNS registers hosts
+        # under the zone domain via the qualifying suffix.
+        domain = _resolve_zone_domain(request.form.get('domain_name'),
+                                      main_domain(config))
+        if domain:
+            subnet_data["option-data"].append({"name": "domain-name", "data": domain})
+            subnet_data["option-data"].append({"name": "domain-search", "data": domain})
+            subnet_data["ddns-qualifying-suffix"] = domain
 
         config["Dhcp4"]["subnet4"].append(subnet_data)
 
@@ -933,18 +1000,19 @@ def edit_subnet(subnet_index):
             s.pop('relay', None)
 
         # Replace the form-managed options, keep any others untouched.
-        def set_option(options, opt_name, data):
-            options[:] = [o for o in options if o.get('name') != opt_name]
-            if data:
-                options.append({'name': opt_name, 'data': data})
-
         options = s.setdefault('option-data', [])
-        set_option(options, 'routers', (request.form.get('gateway') or '').strip())
-        set_option(options, 'domain-name-servers',
-                   (request.form.get('dns_servers') or '').strip())
-        domain = (request.form.get('domain_name') or '').strip()
-        set_option(options, 'domain-name', domain)
-        set_option(options, 'domain-search', domain)  # keep option 119 in sync
+        _set_option(options, 'routers', (request.form.get('gateway') or '').strip())
+        _set_option(options, 'domain-name-servers',
+                    (request.form.get('dns_servers') or '').strip())
+        # A value without a dot is a subdomain of the main domain.
+        domain = _resolve_zone_domain(request.form.get('domain_name'),
+                                      main_domain(config))
+        _set_option(options, 'domain-name', domain)
+        _set_option(options, 'domain-search', domain)  # keep option 119 in sync
+        if domain:
+            s['ddns-qualifying-suffix'] = domain
+        else:
+            s.pop('ddns-qualifying-suffix', None)
         if not options:
             s.pop('option-data', None)
 
