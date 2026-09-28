@@ -1443,9 +1443,40 @@ def group_leases_by_subnet(active_leases, config):
     return groups
 
 
+def _server_status():
+    """Live kea-dhcp4 status for the header bar: (state, uptime_text).
+
+    state is 'running', 'down' or 'dev'; uptime comes from the built-in
+    status-get command."""
+    if DEV_MODE:
+        return ('dev', None)
+    try:
+        resp = kea_ctrl_command('status-get')
+    except Exception:
+        return ('down', None)
+    if resp.get('result') != 0:
+        return ('down', None)
+    secs = (resp.get('arguments') or {}).get('uptime')
+    if not isinstance(secs, (int, float)):
+        return ('running', None)
+    secs = int(secs)
+    d, rem = divmod(secs, 86400)
+    h, rem = divmod(rem, 3600)
+    m, s = divmod(rem, 60)
+    if d:
+        text = f"{d}d {h}h {m}m"
+    elif h:
+        text = f"{h}h {m}m"
+    else:
+        text = f"{m}m {s}s"
+    return ('running', text)
+
+
 @app.route('/leases')
 def leases():
-    """View current leases, grouped by configured subnet."""
+    """Start page: current leases grouped by subnet, plus server status
+    and quick actions."""
+    status, uptime = _server_status()
     try:
         active_leases = parse_lease_file()
         config = load_config()
@@ -1453,9 +1484,13 @@ def leases():
         return render_template('leases.html',
                                leases=active_leases,
                                groups=groups,
-                               total=len(active_leases))
+                               total=len(active_leases),
+                               status=status, uptime=uptime,
+                               config_file=CONFIG_FILE)
     except Exception as e:
-        return render_template('leases.html', leases=[], groups=[], total=0, error=str(e))
+        return render_template('leases.html', leases=[], groups=[], total=0,
+                               status=status, uptime=uptime,
+                               config_file=CONFIG_FILE, error=str(e))
 
 
 @app.route('/delete-lease', methods=['POST'])

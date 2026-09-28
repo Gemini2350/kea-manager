@@ -15,6 +15,28 @@
         </div>
     </div>
 
+    <!-- Server status + quick actions (from the former dashboard) -->
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; padding: 0.75rem 1rem; margin-bottom: 1.25rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);">
+        <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 1.25rem; color: var(--text-muted); font-size: 0.85rem;">
+            <span>
+                {% if status == 'running' %}
+                    <span class="status-indicator status-online"></span><span style="color: var(--text); font-weight: 500;">Running</span>{% if uptime %} &middot; up {{ uptime }}{% endif %}
+                {% elif status == 'dev' %}
+                    <span class="status-indicator status-online"></span><span style="color: var(--text); font-weight: 500;">Dev Mode</span>
+                {% else %}
+                    <span class="status-indicator status-offline"></span><span style="color: var(--text); font-weight: 500;">Not reachable</span>
+                {% endif %}
+            </span>
+            <span><span style="color: var(--text); font-weight: 500;">Config:</span> <code>{{ config_file }}</code></span>
+            <span><span style="color: var(--text); font-weight: 500;">User:</span> {{ session.user }}</span>
+        </div>
+        <div style="display: flex; gap: 0.4rem; flex-wrap: wrap;">
+            <button class="btn" onclick="restartService()">Restart DHCP Service</button>
+            <button class="btn btn-secondary" onclick="location.href='{{ url_for('settings') }}'">Edit Configuration</button>
+        </div>
+    </div>
+    <div id="message"></div>
+
     {% if error %}
         <div class="alert alert-error">
             <strong>Error:</strong> {{ error }}
@@ -327,6 +349,29 @@ function filterLeases() {
             ' &mdash; <a href="#" onclick="clearSearch(); return false;">clear</a>';
     } else {
         summary.innerHTML = '<strong>Total Active Leases:</strong> {{ total }}';
+    }
+}
+
+function restartService() {
+    if (confirm('Are you sure you want to restart the DHCP service?')) {
+        fetch('/restart-service', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        })
+        .then(response => response.json())
+        .then(data => {
+            const messageDiv = document.getElementById('message');
+            if (data.success) {
+                messageDiv.innerHTML = '<div class="alert alert-success">' + data.message + '</div>';
+                // Reload so the status bar picks up the fresh uptime.
+                setTimeout(() => location.reload(), 1500);
+            } else {
+                messageDiv.innerHTML = '<div class="alert alert-error">Error: ' + data.error + '</div>';
+            }
+        })
+        .catch(error => {
+            document.getElementById('message').innerHTML = '<div class="alert alert-error">Network error: ' + error + '</div>';
+        });
     }
 }
 
