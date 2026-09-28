@@ -1564,9 +1564,11 @@ def group_leases_by_subnet(active_leases, config):
         except ValueError:
             net = None
         name = (s.get('user-context') or {}).get('name') or cidr or f"Subnet {s.get('id', '?')}"
+        pools = s.get('pools') or []
         groups.append({
             'name': name,
             'cidr': cidr,
+            'pool': ', '.join(p.get('pool', '') for p in pools if p.get('pool')),
             'subnet_id': s.get('id'),
             'network': net,
             'leases': [],

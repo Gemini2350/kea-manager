@@ -57,6 +57,7 @@
             <summary>
                 <span>{{ group.name }}</span>
                 {% if group.cidr %}<span style="color: var(--text-faint); font-weight: normal;">{{ group.cidr }}</span>{% endif %}
+                {% if group.pool %}<span style="color: var(--text-faint); font-weight: normal; font-size: 0.85em;" title="DHCP pool">Pool: {{ group.pool }}</span>{% endif %}
                 <span class="badge badge-accent" style="margin-left: auto;">{{ group.leases|length }} lease{{ '' if group.leases|length == 1 else 's' }}</span>
             </summary>
             <div style="padding: 0 1rem 1rem 1rem;">
