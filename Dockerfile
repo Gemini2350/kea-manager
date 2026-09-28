@@ -25,11 +25,17 @@ RUN adduser -D -u 1000 kea 2>/dev/null || true && \
 # and to use raw sockets if the config requests raw socket type (CAP_NET_RAW).
 RUN setcap 'cap_net_bind_service,cap_net_raw=+ep' /usr/sbin/kea-dhcp4
 
-# Download IEEE OUI database for offline MAC-to-vendor lookup.
-# The CSV (~4-5 MB) is baked into the image so no runtime internet access is needed.
+# IEEE OUI database for offline MAC-to-vendor lookup, baked into the image.
+# Try a fresh download first; standards-oui.ieee.org is unreliable from CI
+# runners, so fall back to the snapshot bundled in the repo rather than
+# failing the whole build over a data file.
+COPY assets/oui.csv.gz /tmp/oui.csv.gz
 RUN mkdir -p /app && \
     apk add --no-cache --virtual .oui-deps curl && \
-    curl -fsSL --retry 3 -o /app/oui.csv https://standards-oui.ieee.org/oui/oui.csv && \
+    { curl -fsSL --retry 3 -o /app/oui.csv https://standards-oui.ieee.org/oui/oui.csv \
+      || { echo "IEEE download failed, using bundled OUI snapshot"; \
+           gunzip -c /tmp/oui.csv.gz > /app/oui.csv; }; } && \
+    rm /tmp/oui.csv.gz && \
     apk del .oui-deps
 
 # Copy application files
