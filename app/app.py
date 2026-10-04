@@ -1580,12 +1580,18 @@ def group_leases_by_subnet(active_leases, config):
             net = None
         name = (s.get('user-context') or {}).get('name') or cidr or f"Subnet {s.get('id', '?')}"
         pools = s.get('pools') or []
+        reservations = s.get('reservations') or []
         groups.append({
             'name': name,
             'cidr': cidr,
             'pool': ', '.join(p.get('pool', '') for p in pools if p.get('pool')),
             'subnet_id': s.get('id'),
             'network': net,
+            # For hiding the Reserve button on already-reserved leases.
+            'reserved_macs': {(r.get('hw-address') or '').lower()
+                              for r in reservations if r.get('hw-address')},
+            'reserved_ips': {r.get('ip-address')
+                             for r in reservations if r.get('ip-address')},
             'leases': [],
         })
 
@@ -1600,15 +1606,20 @@ def group_leases_by_subnet(active_leases, config):
         placed = False
         for g in groups:
             if g['network'] is not None and ip in g['network']:
+                lease['reserved'] = (lease.get('mac', '').lower() in g['reserved_macs']
+                                     or lease['ip'] in g['reserved_ips'])
                 g['leases'].append(lease)
                 placed = True
                 break
         if not placed:
+            lease['reserved'] = False
             unassigned['leases'].append(lease)
 
-    # Strip the non-serializable network object before handing to Jinja.
+    # Strip the helper structures before handing to Jinja.
     for g in groups:
         g.pop('network', None)
+        g.pop('reserved_macs', None)
+        g.pop('reserved_ips', None)
     unassigned.pop('network', None)
 
     if unassigned['leases']:

@@ -87,6 +87,10 @@
                                 <td>{{ lease.lifetime }}</td>
                                 <td>{{ lease.expire }}</td>
                                 <td>
+                                    {% if lease.reserved %}
+                                    <span class="badge" title="A static reservation already exists for this MAC or IP"
+                                          style="font-size: 0.75rem;">Reserved</span>
+                                    {% else %}
                                     <button type="button" class="btn btn-secondary reserve-btn"
                                             style="padding: 0.2rem 0.55rem; font-size: 0.8rem;"
                                             data-ip="{{ lease.ip }}"
@@ -95,6 +99,7 @@
                                             data-vendor="{{ lease.vendor }}">
                                         Reserve
                                     </button>
+                                    {% endif %}
                                     <button type="button" class="btn btn-danger delete-lease-btn"
                                             style="padding: 0.2rem 0.55rem; font-size: 0.8rem;"
                                             data-ip="{{ lease.ip }}"
