@@ -552,11 +552,17 @@ def _ddns_view(dhcp4_cfg, ddns_cfg):
     if servers:
         dns_server = servers[0].get('ip-address', '')
 
+    reverse_zones = ', '.join(
+        d.get('name', '').rstrip('.')
+        for d in ddns.get('reverse-ddns', {}).get('ddns-domains', [])
+        if d.get('name'))
+
     return {
         'enabled': bool(dhcp4.get('ddns-send-updates', False)),
         'qualifying_suffix': dhcp4.get('ddns-qualifying-suffix', ''),
         'dns_server': dns_server,
         'forward_zone': forward.get('name', '').rstrip('.'),
+        'reverse_zones': reverse_zones,
         'key_name': tsig.get('name', ''),
         'key_algorithm': tsig.get('algorithm', 'HMAC-SHA256'),
         'key_secret': tsig.get('secret', ''),
@@ -640,6 +646,15 @@ def update_ddns():
                 domains[0]['name'] = target_name
             else:
                 domains.append({'name': target_name})
+
+        # Reverse zones (PTR records): without a matching zone the daemon
+        # discards the whole update, forward record included.
+        reverse_zones = [z.strip().rstrip('.')
+                         for z in (request.form.get('reverse_zone') or '').split(',')
+                         if z.strip()]
+        rev = ddns['DhcpDdns'].setdefault('reverse-ddns', {})
+        rev['ddns-domains'] = [{'name': z + '.'} for z in reverse_zones]
+
         _apply_to_zones('forward-ddns')
         _apply_to_zones('reverse-ddns')
 
