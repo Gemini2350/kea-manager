@@ -5,6 +5,12 @@ mkdir -p /run/kea /var/log/supervisor
 chmod 750 /run/kea
 chown kea:kea /run/kea
 
+# Remove stale PID files from an unclean container stop. No KEA process can
+# be running yet at this point, and a leftover PID may now belong to an
+# unrelated process -- kea-dhcp4 would then refuse to start
+# (DHCP4_ALREADY_RUNNING) until supervisord gives up with FATAL.
+rm -f /run/kea/*.pid
+
 # Copy default configs if none exist
 if [ ! -f "/etc/kea/kea-dhcp4.conf" ]; then
     echo "No DHCP4 configuration found, copying default..."
