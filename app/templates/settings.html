@@ -55,6 +55,14 @@
                 </div>
             </div>
 
+            <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" id="match_by_mac" name="match_by_mac" style="width: auto; margin: 0;"
+                       {% if config.Dhcp4 and config.Dhcp4.get('match-client-id', True) == False %}checked{% endif %}>
+                <label for="match_by_mac" style="margin: 0; font-weight: 500;">Identify clients by MAC address only</label>
+                <small style="color: var(--text-muted);">&mdash; ignore DHCP client-ids; needed when clients are
+                    cloned VMs sharing a machine-id/DUID, which otherwise evict each other's leases</small>
+            </div>
+
             <div style="text-align: center;">
                 <button type="submit" class="btn btn-success">Update Global Settings</button>
             </div>
@@ -112,6 +120,21 @@
                     <input type="text" id="qualifying_suffix" name="qualifying_suffix"
                            value="{{ ddns.qualifying_suffix }}"
                            placeholder="simplexity.training">
+                </div>
+
+                <div class="form-group">
+                    <label for="conflict_mode">Conflict Resolution:</label>
+                    <select id="conflict_mode" name="conflict_mode">
+                        <option value="check-with-dhcid" {% if ddns.conflict_mode == 'check-with-dhcid' %}selected{% endif %}>check-with-dhcid (default, ownership check)</option>
+                        <option value="no-check-with-dhcid" {% if ddns.conflict_mode == 'no-check-with-dhcid' %}selected{% endif %}>no-check-with-dhcid (overwrite stale records)</option>
+                        <option value="check-exists-with-dhcid" {% if ddns.conflict_mode == 'check-exists-with-dhcid' %}selected{% endif %}>check-exists-with-dhcid</option>
+                        <option value="no-check-without-dhcid" {% if ddns.conflict_mode == 'no-check-without-dhcid' %}selected{% endif %}>no-check-without-dhcid</option>
+                    </select>
+                    <small style="color: var(--text-muted); display: block; margin-top: 0.25rem;">
+                        With the default, updates are rejected (RCODE 8) when the existing DNS
+                        record carries a different DHCID &mdash; e.g. after switching client
+                        identification. "no-check-with-dhcid" lets KEA replace such records.
+                    </small>
                 </div>
             </div>
 

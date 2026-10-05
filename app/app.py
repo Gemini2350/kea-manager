@@ -563,6 +563,8 @@ def _ddns_view(dhcp4_cfg, ddns_cfg):
         'dns_server': dns_server,
         'forward_zone': forward.get('name', '').rstrip('.'),
         'reverse_zones': reverse_zones,
+        'conflict_mode': dhcp4.get('ddns-conflict-resolution-mode',
+                                   'check-with-dhcid'),
         'key_name': tsig.get('name', ''),
         'key_algorithm': tsig.get('algorithm', 'HMAC-SHA256'),
         'key_secret': tsig.get('secret', ''),
@@ -588,6 +590,14 @@ def update_ddns():
         dhcp4['Dhcp4']['ddns-send-updates'] = enabled
         if qualifying_suffix:
             dhcp4['Dhcp4']['ddns-qualifying-suffix'] = qualifying_suffix
+
+        # DNS update conflict handling (DHCID ownership check). The
+        # no-check mode lets KEA overwrite stale records, e.g. after the
+        # client identification or a machine identity changed.
+        conflict_mode = request.form.get('conflict_mode', '')
+        if conflict_mode in ('check-with-dhcid', 'no-check-with-dhcid',
+                             'check-exists-with-dhcid', 'no-check-without-dhcid'):
+            dhcp4['Dhcp4']['ddns-conflict-resolution-mode'] = conflict_mode
         # Make sure the dhcp-ddns wiring is in place.
         dhcp4['Dhcp4'].setdefault('dhcp-ddns', {
             'enable-updates': True,
@@ -723,6 +733,12 @@ def update_settings():
 
         # Set authoritative mode
         config["Dhcp4"]["authoritative"] = True
+
+        # Client identification: by MAC only, or client-id first (KEA
+        # default). MAC-only is the sane choice when clients are cloned
+        # VMs sharing a DUID -- otherwise they evict each other's leases.
+        config["Dhcp4"]["match-client-id"] = \
+            request.form.get('match_by_mac') != 'on'
 
         # Initialize control-socket section
         if "control-socket" not in config["Dhcp4"]:
