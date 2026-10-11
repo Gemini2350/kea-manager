@@ -4,15 +4,34 @@ A web-based management interface for ISC KEA DHCP4 server, packaged as a lightwe
 
 ## Features
 
-- **Web UI Management**: Modern, responsive web interface for KEA DHCP configuration
-- **Subnet Management**: Add, delete, and configure DHCP subnets with pools and options
-- **Static Reservations**: Manage MAC-to-IP static reservations
-- **Lease Monitoring**: View active DHCP leases in real-time, delete single
-  leases via the KEA control socket (no service restart)
-- **Log Viewer**: Live tail of the KEA/DDNS/web service logs in the browser
-- **Configuration Editor**: Direct JSON configuration editing with validation
-- **Secure Authentication**: SQLite-based user management with password reset functionality
-- **Service Control**: Restart KEA DHCP service from the web interface
+- **Live Lease View** (start page): leases read straight from the running
+  server via the KEA control socket — grouped per subnet with pool ranges,
+  search, vendor lookup (offline IEEE OUI database), auto-refresh, and a
+  status bar with real server state, uptime and quick actions
+- **Lease Actions**: delete single leases or turn them into static
+  reservations directly from the lease table (no service restart needed);
+  already-reserved leases are flagged
+- **Subnet Management**: add, edit and delete subnets — pools, relay
+  (`giaddr`), gateway, DNS, domain — reservations and ids survive edits
+- **Subnet Groups**: free-form groups (name + color, e.g. "Amber"/"Studio")
+  assignable per subnet; bulk reservations can target a whole group with the
+  host part re-based into each subnet
+- **Zone Subdomains**: set a main domain globally and a subdomain per subnet
+  (`studio1` → `studio1.example.lan`), handed out as domain, DNS search list
+  (option 119) and DDNS suffix; renaming the main domain re-bases all zones
+- **Static Reservations**: per subnet or group, with override handling and
+  collapsible per-subnet lists
+- **Dynamic DNS**: forward and reverse zones (PTR records), TSIG keys,
+  qualifying suffix and conflict-resolution mode — all from the GUI
+- **Client Identification Switch**: identify clients by MAC only
+  (`match-client-id: false`) — essential when cloned VMs share a
+  machine-id/DUID and would otherwise evict each other's leases
+- **Log Viewer**: live tail of the KEA/DDNS/web service logs in the browser
+- **Configuration Editor**: direct JSON editing with validation, plus
+  config import/export
+- **Secure Authentication**: SQLite-based user management with password
+  reset; persistent session key (logins survive container restarts)
+- **Service Control**: restart the KEA DHCP service from the web interface
 
 ## Quick Start
 
@@ -54,14 +73,17 @@ A ready-to-use `docker-compose.yml` is included in the repository.
 
 1. Access the web interface at `http://localhost:5000`
 2. Complete the initial setup by creating an admin account
-3. Configure your first DHCP subnet and pool
-4. Start the KEA DHCP service
+3. Review the global settings (main domain, timers, interfaces)
+4. Configure your first DHCP subnet and pool — saving applies the
+   configuration and restarts the DHCP service automatically
 
 ## Configuration
 
 The container exposes `/etc/kea` as a volume where all configuration files are stored:
 
 - `kea-dhcp4.conf` - Main KEA DHCP configuration
+- `kea-dhcp-ddns.conf` - DDNS daemon configuration (zones, TSIG keys)
+- `manager.json` - App settings (subnet group definitions)
 - `auth.db` - User authentication database
 - `password_reset.key` - Temporary password reset keys
 - `secret.key` - Auto-generated Flask session key (created on first start)
@@ -157,7 +179,9 @@ add to your workspace settings:
 kea-manager/
 ├── app/
 │   ├── app.py              # Flask app: routes, config/lease/DDNS logic
-│   └── templates/          # Jinja2 templates (dashboard, leases, settings, ...)
+│   ├── static/             # Favicon
+│   └── templates/          # Jinja2 templates (leases, settings, logs, ...)
+├── assets/                 # Bundled IEEE OUI snapshot (build fallback)
 ├── config/                 # Sample KEA + supervisord configs (image defaults)
 ├── Dockerfile              # Alpine image: KEA daemons + Python + supervisord
 ├── docker-compose.yml      # Deployment (pulls the published image)
