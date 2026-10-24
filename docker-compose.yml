@@ -17,4 +17,7 @@ services:
     volumes:
       - ./kea-config:/etc/kea    # config, auth.db, session key
       - ./kea-leases:/var/lib/kea # lease database
+    # Give supervisord enough time to shut kea-dhcp4 down cleanly, so the
+    # lease journal is always consistent across reboots (default is 10s).
+    stop_grace_period: 30s
     restart: always
