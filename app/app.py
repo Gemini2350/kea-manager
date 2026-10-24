@@ -26,6 +26,13 @@ except ImportError:
 
 app = Flask(__name__)
 
+# Honour X-Forwarded-* headers when running behind a TLS-terminating
+# reverse proxy (Caddy, nginx, ...). Opt-in via KEA_BEHIND_PROXY=1:
+# those headers are client-controllable when the app is reached directly.
+if os.environ.get('KEA_BEHIND_PROXY', '').lower() in ('1', 'true', 'yes'):
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_for=1, x_host=1)
+
 # All filesystem locations are env-overridable so the app can run locally for
 # development without the container's /etc/kea and /var/lib/kea directories.
 # In production (Docker) the defaults below are used unchanged.

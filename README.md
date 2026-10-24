@@ -123,6 +123,12 @@ defaults to 24 h!), either raise the CA's certificate lifetime (step-ca:
 `ACME_RENEW_DAYS` below it (e.g. `30`), or at minimum set
 `ACME_RENEW_DAYS=1`.
 
+**Behind a reverse proxy** (Caddy, nginx, ... terminating TLS): leave the
+`ACME_*`/`KEA_TLS_*` settings unset, point the proxy at port 5000 and set
+`KEA_BEHIND_PROXY=1` so the app honours the proxy's `X-Forwarded-*`
+headers (correct scheme in redirects and client IPs in logs). Keep it
+unset without a proxy -- those headers are client-controllable then.
+
 ## Password Recovery
 
 If you forget your admin credentials:
