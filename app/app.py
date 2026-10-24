@@ -17,6 +17,13 @@ from flask import (Flask, render_template, request, redirect, url_for, flash,
 import subprocess
 import signal
 
+try:
+    import dns.resolver
+    import dns.reversename
+    HAVE_DNSPYTHON = True
+except ImportError:
+    HAVE_DNSPYTHON = False
+
 app = Flask(__name__)
 
 # All filesystem locations are env-overridable so the app can run locally for
@@ -314,6 +321,172 @@ def save_ddns_config(config):
     """Save KEA DDNS daemon configuration."""
     with open(DDNS_CONFIG_FILE, 'w') as f:
         json.dump(config, f, indent=2)
+
+
+def _send_ncr(ddns_cfg, payload):
+    """Send a Name Change Request to kea-dhcp-ddns, the same way
+    kea-dhcp4 does: JSON over UDP, framed with a 2-byte big-endian
+    length prefix (fire and forget)."""
+    dd = (ddns_cfg or {}).get('DhcpDdns', {})
+    addr = dd.get('ip-address', '127.0.0.1')
+    port = int(dd.get('port', 53001))
+    data = json.dumps(payload).encode()
+    frame = len(data).to_bytes(2, 'big') + data
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.sendto(frame, (addr, port))
+    finally:
+        s.close()
+
+
+def _dns_query(server, qname, rdtype):
+    """Query one record at a specific DNS server. Returns a list of
+    rdata strings, [] when the name doesn't exist, None on timeout."""
+    try:
+        resolver = dns.resolver.Resolver(configure=False)
+        resolver.nameservers = [server]
+        resolver.timeout = 2
+        resolver.lifetime = 3
+        answer = resolver.resolve(qname, rdtype)
+        return [str(r) for r in answer]
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+        return []
+    except Exception:
+        return None
+
+
+@app.route('/ddns-test', methods=['POST'])
+def ddns_test():
+    """End-to-end DDNS test.
+
+    Injects a test NCR into kea-dhcp-ddns -- the exact path kea-dhcp4
+    uses -- so zone matching, TSIG signing and the DNS server itself are
+    all exercised. Success is confirmed by querying the configured DNS
+    server for the resulting A (and PTR) record; afterwards the test
+    records are removed again.
+    """
+    steps = []
+
+    def step(name, ok, detail=''):
+        steps.append({'name': name, 'ok': ok, 'detail': detail})
+        return ok
+
+    if not HAVE_DNSPYTHON:
+        step('Preconditions', False,
+             'dnspython is not installed (image too old?) -- cannot verify records.')
+        return jsonify({'success': False, 'steps': steps, 'log': []})
+
+    dhcp4 = load_config()
+    ddns = load_ddns_config()
+    view = _ddns_view(dhcp4, ddns)
+
+    if not view['enabled']:
+        step('Preconditions', False, 'DDNS is disabled (enable and save first).')
+        return jsonify({'success': False, 'steps': steps, 'log': []})
+    if not view['forward_zone'] or not view['dns_server']:
+        step('Preconditions', False, 'Forward zone and DNS server must be configured.')
+        return jsonify({'success': False, 'steps': steps, 'log': []})
+    step('Preconditions', True,
+         f"zone {view['forward_zone']}, DNS server {view['dns_server']}")
+
+    fqdn = f"kea-manager-ddns-test.{view['forward_zone']}."
+    dhcid = '0001' + hashlib.sha256(fqdn.encode()).hexdigest()[:60]
+
+    # Reverse part: use the network address of a subnet covered by a
+    # configured reverse zone -- never a leasable client address.
+    reverse_zones = [z.strip() for z in view['reverse_zones'].split(',') if z.strip()]
+    test_ip, do_reverse = None, False
+    for s in (dhcp4 or {}).get('Dhcp4', {}).get('subnet4') or []:
+        try:
+            net = ipaddress.ip_network(s.get('subnet', ''), strict=False)
+        except ValueError:
+            continue
+        candidate = str(net.network_address)
+        rev_name = str(dns.reversename.from_address(candidate)).rstrip('.')
+        if any(rev_name == z or rev_name.endswith('.' + z) for z in reverse_zones):
+            test_ip, do_reverse = candidate, True
+            break
+        if test_ip is None:
+            test_ip = candidate
+    if test_ip is None:
+        test_ip = '127.0.0.1'
+    if reverse_zones and not do_reverse:
+        step('Reverse zone match', False,
+             'No configured subnet falls into the configured reverse zone(s); '
+             'testing forward only.')
+
+    now = datetime.utcnow()
+    ncr = {
+        'change-type': 0,
+        'forward-change': True,
+        'reverse-change': do_reverse,
+        'fqdn': fqdn,
+        'ip-address': test_ip,
+        'dhcid': dhcid,
+        'lease-expires-on': now.strftime('%Y%m%d%H%M%S'),
+        'lease-length': 300,
+        'conflict-resolution-mode':
+            (dhcp4 or {}).get('Dhcp4', {}).get('ddns-conflict-resolution-mode',
+                                               'check-with-dhcid'),
+    }
+    try:
+        _send_ncr(ddns, ncr)
+        step('Test request sent to kea-dhcp-ddns', True, f'{fqdn} -> {test_ip}')
+    except Exception as e:
+        step('Test request sent to kea-dhcp-ddns', False, str(e))
+        return jsonify({'success': False, 'steps': steps, 'log': []})
+
+    # Poll the DNS server until the record shows up.
+    fwd_ok = False
+    for _ in range(8):
+        time.sleep(1)
+        result = _dns_query(view['dns_server'], fqdn, 'A')
+        if result and test_ip in result:
+            fwd_ok = True
+            break
+    step('A record appeared on DNS server', fwd_ok,
+         f'{fqdn} = {test_ip}' if fwd_ok else
+         'record did not appear within 8s -- check the log excerpt below')
+
+    rev_ok = None
+    if do_reverse:
+        rev_ok = False
+        rev_name = dns.reversename.from_address(test_ip)
+        for _ in range(5):
+            result = _dns_query(view['dns_server'], rev_name, 'PTR')
+            if result and fqdn in result:
+                rev_ok = True
+                break
+            time.sleep(1)
+        step('PTR record appeared on DNS server', rev_ok,
+             f'{test_ip} -> {fqdn}' if rev_ok else
+             'PTR did not appear within 5s')
+
+    # Clean up: remove the test records again.
+    try:
+        _send_ncr(ddns, dict(ncr, **{'change-type': 1}))
+        removed = False
+        for _ in range(5):
+            time.sleep(1)
+            if _dns_query(view['dns_server'], fqdn, 'A') == []:
+                removed = True
+                break
+        step('Test records removed again', removed,
+             '' if removed else 'remove request sent, but the A record is still there')
+    except Exception as e:
+        step('Test records removed again', False, str(e))
+
+    # Relevant kea-dhcp-ddns log lines for diagnosis.
+    log_lines = []
+    try:
+        with open(os.path.join(LOG_DIR, 'kea-dhcp-ddns.out.log')) as f:
+            log_lines = [l.rstrip() for l in f.readlines()[-400:]
+                         if 'kea-manager-ddns-test' in l][-12:]
+    except OSError:
+        pass
+
+    success = fwd_ok and (rev_ok is not False)
+    return jsonify({'success': success, 'steps': steps, 'log': log_lines})
 
 
 def restart_ddns_service():

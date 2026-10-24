@@ -12,6 +12,7 @@ RUN apk add --no-cache \
     python3 \
     py3-flask \
     py3-werkzeug \
+    py3-dnspython \
     supervisor \
     ca-certificates \
     libcap

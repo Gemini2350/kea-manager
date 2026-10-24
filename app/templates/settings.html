@@ -172,8 +172,10 @@
 
             <div style="text-align: center; margin-top: 0.5rem;">
                 <button type="submit" class="btn btn-success">Save DDNS Settings</button>
+                <button type="button" class="btn btn-secondary" id="ddns-test-btn" onclick="runDdnsTest()">Test DDNS</button>
             </div>
         </form>
+        <div id="ddns-test-result" style="margin-top: 1rem;"></div>
     </div>
 
     <!-- Subnet Groups -->
@@ -531,6 +533,34 @@ function toggleSecret() {
 function toggleAddSubnet() {
     const form = document.getElementById('add-subnet-form');
     form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+function runDdnsTest() {
+    const btn = document.getElementById('ddns-test-btn');
+    const out = document.getElementById('ddns-test-result');
+    btn.disabled = true;
+    btn.textContent = 'Testing… (takes a few seconds)';
+    out.innerHTML = '';
+    fetch('/ddns-test', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            let html = '<div class="alert ' + (data.success ? 'alert-success' : 'alert-error') + '">'
+                + '<strong>DDNS Test ' + (data.success ? 'passed' : 'failed') + '</strong><ul style="margin: 0.5rem 0 0 1.25rem;">';
+            for (const s of data.steps) {
+                html += '<li>' + (s.ok ? '&#10004;' : '&#10008;') + ' ' + s.name
+                    + (s.detail ? ' <span style="opacity: 0.8;">&mdash; ' + s.detail + '</span>' : '') + '</li>';
+            }
+            html += '</ul>';
+            if (data.log && data.log.length) {
+                html += '<details style="margin-top: 0.5rem;"><summary style="cursor: pointer;">kea-dhcp-ddns log excerpt</summary>'
+                    + '<pre style="font-size: 0.75rem; overflow-x: auto; margin-top: 0.4rem;">'
+                    + data.log.map(l => l.replace(/&/g, '&amp;').replace(/</g, '&lt;')).join('\n')
+                    + '</pre></details>';
+            }
+            out.innerHTML = html + '</div>';
+        })
+        .catch(err => { out.innerHTML = '<div class="alert alert-error">Test request failed: ' + err + '</div>'; })
+        .finally(() => { btn.disabled = false; btn.textContent = 'Test DDNS'; });
 }
 
 function toggleEditSubnet(subnetIndex) {
