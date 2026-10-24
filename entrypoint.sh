@@ -29,6 +29,45 @@ fi
 # to read /etc/kea and write the lease database in /var/lib/kea.
 chown -R kea:kea /etc/kea /var/lib/kea
 
+# --- Optional: web UI certificate via ACME (e.g. an internal step-ca) ---
+# Set ACME_DOMAIN and ACME_DIRECTORY_URL to have the container obtain and
+# renew the HTTPS certificate itself. ACME_CA_BUNDLE points at the CA's
+# root certificate when the directory URL itself uses a private CA.
+mkdir -p /run/supervisord-extra
+# Keep the supervisord [include] glob non-empty even without ACME.
+: > /run/supervisord-extra/placeholder.conf
+if [ -n "$ACME_DOMAIN" ] && [ -n "$ACME_DIRECTORY_URL" ]; then
+    mkdir -p /etc/kea/tls /etc/kea/acme
+    CA_ARG=""
+    [ -n "$ACME_CA_BUNDLE" ] && CA_ARG="--ca-bundle $ACME_CA_BUNDLE"
+    # ACME_RENEW_DAYS: renew this many days after issuance (acme.sh
+    # default: 60). Set it BELOW the CA's certificate lifetime -- private
+    # CAs like step-ca often issue much shorter-lived certs than 90 days.
+    DAYS_ARG=""
+    [ -n "$ACME_RENEW_DAYS" ] && DAYS_ARG="--days $ACME_RENEW_DAYS"
+    if ! acme.sh --home /etc/kea/acme --list 2>/dev/null | grep -q "$ACME_DOMAIN"; then
+        echo "Requesting certificate for $ACME_DOMAIN from $ACME_DIRECTORY_URL..."
+        acme.sh --home /etc/kea/acme --server "$ACME_DIRECTORY_URL" $CA_ARG $DAYS_ARG \
+                --issue --standalone -d "$ACME_DOMAIN" \
+            || echo "WARNING: ACME issue failed -- web UI stays on HTTP until the next container start"
+    fi
+    # Record the install paths; acme.sh re-installs them on every renewal,
+    # and the web UI restarts itself when the cert file changes.
+    acme.sh --home /etc/kea/acme --install-cert -d "$ACME_DOMAIN" \
+            --fullchain-file /etc/kea/tls/cert.pem \
+            --key-file /etc/kea/tls/key.pem 2>/dev/null \
+        || true
+    # Renewal check every 6 hours as a supervised service.
+    cat > /run/supervisord-extra/acme-renew.conf <<'ACME'
+[program:acme-renew]
+command=/bin/sh -c "while true; do sleep 21600; acme.sh --home /etc/kea/acme --cron; done"
+autostart=true
+autorestart=true
+stderr_logfile=/var/log/supervisor/acme-renew.err.log
+stdout_logfile=/var/log/supervisor/acme-renew.out.log
+ACME
+fi
+
 # Migrate existing configs: the web UI deletes leases via the lease_cmds
 # hook, so make sure it is loaded even in configs created before the
 # hook was added to the default config.

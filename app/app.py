@@ -2060,5 +2060,36 @@ def reserve_lease():
 
     return redirect(url_for('leases'))
 
+TLS_CERT = os.environ.get('KEA_TLS_CERT', os.path.join(KEA_ETC_DIR, 'tls', 'cert.pem'))
+TLS_KEY = os.environ.get('KEA_TLS_KEY', os.path.join(KEA_ETC_DIR, 'tls', 'key.pem'))
+
+
+def _watch_tls_cert(path):
+    """Exit the process when the certificate file changes (e.g. after an
+    ACME renewal); supervisord respawns the app with the new cert."""
+    interval = int(os.environ.get('KEA_TLS_WATCH_INTERVAL', '60'))
+    try:
+        seen = os.stat(path).st_mtime
+    except OSError:
+        return
+    while True:
+        time.sleep(interval)
+        try:
+            current = os.stat(path).st_mtime
+        except OSError:
+            continue
+        if current != seen:
+            print('TLS certificate changed -- restarting to pick it up')
+            os._exit(0)
+
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    ssl_ctx = None
+    if os.path.exists(TLS_CERT) and os.path.exists(TLS_KEY):
+        ssl_ctx = (TLS_CERT, TLS_KEY)
+        threading.Thread(target=_watch_tls_cert, args=(TLS_CERT,),
+                         daemon=True).start()
+        print(f'Web UI serving HTTPS with certificate {TLS_CERT}')
+    else:
+        print('No TLS certificate found -- web UI serving plain HTTP')
+    app.run(host='0.0.0.0', port=5000, debug=False, ssl_context=ssl_ctx)

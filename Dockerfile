@@ -15,7 +15,10 @@ RUN apk add --no-cache \
     py3-dnspython \
     supervisor \
     ca-certificates \
-    libcap
+    libcap \
+    acme.sh \
+    openssl \
+    curl
 
 # Create kea user
 RUN adduser -D -u 1000 kea 2>/dev/null || true && \

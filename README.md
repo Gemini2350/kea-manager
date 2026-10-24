@@ -88,6 +88,41 @@ The container exposes `/etc/kea` as a volume where all configuration files are s
 - `password_reset.key` - Temporary password reset keys
 - `secret.key` - Auto-generated Flask session key (created on first start)
 
+## HTTPS for the Web UI
+
+The web UI serves plain HTTP until a certificate is present; with one it
+serves HTTPS on the same port (5000). Two ways to provide it:
+
+**Manual:** place `cert.pem` (full chain) and `key.pem` into `tls/` inside
+the `/etc/kea` volume (paths overridable via `KEA_TLS_CERT` / `KEA_TLS_KEY`).
+The app watches the certificate file and restarts itself when it changes,
+so renewals are picked up automatically.
+
+**Automatic via ACME** (e.g. an internal [step-ca](https://smallstep.com/docs/step-ca/)
+or any other ACME CA):
+
+```yaml
+    environment:
+      - ACME_DOMAIN=dhcp.example.lan
+      - ACME_DIRECTORY_URL=https://ca.example.lan:9000/acme/acme/directory
+      - ACME_CA_BUNDLE=/etc/kea/tls/root_ca.crt   # root cert of a private CA
+```
+
+On start the container obtains the certificate itself (acme.sh, HTTP-01
+standalone -- port 80 must be free on the host and the domain must resolve
+to it) and renews it automatically (check every 6 hours); the web UI
+reloads on renewal. ACME account and certificates live in the `/etc/kea`
+volume. For a private CA, drop its root certificate into the volume first
+(path above). If issuance fails the UI stays on HTTP and the container
+logs a warning.
+
+Note on short-lived certificates: acme.sh renews 60 days after issuance
+by default. If your CA issues shorter-lived certificates (step-ca
+defaults to 24 h!), either raise the CA's certificate lifetime (step-ca:
+`maxTLSCertDuration` on the provisioner, e.g. `2160h`) and set
+`ACME_RENEW_DAYS` below it (e.g. `30`), or at minimum set
+`ACME_RENEW_DAYS=1`.
+
 ## Password Recovery
 
 If you forget your admin credentials:

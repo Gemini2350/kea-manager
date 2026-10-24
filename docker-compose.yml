@@ -8,6 +8,10 @@ services:
     network_mode: host
     environment:
       - TZ=UTC
+      # Optional: HTTPS via ACME (see README "HTTPS for the Web UI")
+      # - ACME_DOMAIN=dhcp.example.lan
+      # - ACME_DIRECTORY_URL=https://ca.example.lan:9000/acme/acme/directory
+      # - ACME_CA_BUNDLE=/etc/kea/tls/root_ca.crt
     volumes:
       - ./kea-config:/etc/kea    # config, auth.db, session key
       - ./kea-leases:/var/lib/kea # lease database
