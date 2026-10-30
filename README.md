@@ -18,7 +18,10 @@ A web-based management interface for ISC KEA DHCP4 server, packaged as a lightwe
   (`giaddr`), gateway, DNS, domain — reservations and ids survive edits;
   a count field creates several consecutive subnets in one go
   (10.1.1.0/24, 10.1.2.0/24, …) with pool/gateway/relay rebased into
-  each network and name/zone numbered
+  each network and name/zone numbered; /30 and /31 (RFC 3021)
+  point-to-point subnets derive everything from one choice — which of
+  the two usable IPs is the relay/gateway, the other being the single
+  DHCP address
 - **Subnet Groups**: free-form groups (name + color, e.g. "Amber"/"Studio")
   assignable per subnet; bulk reservations can target a whole group with the
   host part re-based into each subnet

@@ -220,7 +220,7 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="count">Count (consecutive subnets): {{ help("A count above 1 creates that many consecutive subnets (<code>10.1.1.0/24</code>, <code>10.1.2.0/24</code>, ...) in one go: pool, gateway and relay keep their host part rebased into each network, and a trailing number in name/domain is incremented (<code>Insel 1</code> &rarr; <code>Insel 2</code>, <code>studio1</code> &rarr; <code>studio2</code>). Existing networks are skipped.") }}</label>
+                        <label for="count">Count (consecutive subnets): {{ help("A count above 1 creates that many consecutive subnets (<code>10.1.1.0/24</code>, <code>10.1.2.0/24</code>, ...) in one go: pool, gateway and relay keep their host part rebased into each network, and a trailing number in name/domain is incremented (<code>Insel 1</code> &rarr; <code>Insel 2</code>, <code>studio1</code> &rarr; <code>studio2</code>). Existing networks are skipped. For /30 and /31 the two usable IPs are assigned automatically instead.") }}</label>
                         <input type="number" id="count" name="count" value="1" min="1" max="64">
                     </div>
 
@@ -234,28 +234,36 @@
                         </select>
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" id="fg-relay">
                         <label for="relay">Relay IP (giaddr): {{ help("The address the DHCP relay inserts as <code>giaddr</code> (typically the router in the target subnet). Required when clients reach KEA through a relay rather than sitting on the same L2 segment.") }}</label>
                         <input type="text" id="relay" name="relay"
                                placeholder="192.168.1.2">
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" id="fg-pool-start">
                         <label for="pool_start">Pool Start IP:</label>
                         <input type="text" id="pool_start" name="pool_start" required
                                placeholder="192.168.1.100">
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" id="fg-pool-end">
                         <label for="pool_end">Pool End IP:</label>
                         <input type="text" id="pool_end" name="pool_end" required
                                placeholder="192.168.1.200">
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" id="fg-gateway">
                         <label for="gateway">Gateway IP:</label>
                         <input type="text" id="gateway" name="gateway"
                                placeholder="192.168.1.1">
+                    </div>
+
+                    <div class="form-group" id="fg-p2p" style="display: none;">
+                        <label for="p2p_order">Point-to-point IPs: {{ help("A /30 or /31 has exactly two usable addresses (a /31 uses both per RFC 3021). One is the router &mdash; relay (giaddr) and gateway at once &mdash; the other becomes the single DHCP address. Pool, gateway and relay are derived automatically for every subnet of the batch; just pick which of the two the router owns.") }}</label>
+                        <select id="p2p_order" name="p2p_order">
+                            <option value="gw_first">1st IP = relay/gateway, 2nd = DHCP</option>
+                            <option value="dhcp_first">1st IP = DHCP, 2nd = relay/gateway</option>
+                        </select>
                     </div>
 
                     <div class="form-group">
@@ -526,6 +534,22 @@ function toggleAddSubnet() {
     const form = document.getElementById('add-subnet-form');
     form.style.display = form.style.display === 'none' ? 'block' : 'none';
 }
+
+// /30 and /31 point-to-point subnets: pool/gateway/relay are derived, so
+// swap those inputs for the p2p order selector while such a CIDR is typed.
+function updateP2pFields() {
+    const cidr = document.getElementById('subnet').value;
+    const m = cidr.match(/\/(\d+)\s*$/);
+    const p2p = m && (m[1] === '30' || m[1] === '31');
+    for (const id of ['fg-relay', 'fg-pool-start', 'fg-pool-end', 'fg-gateway']) {
+        document.getElementById(id).style.display = p2p ? 'none' : '';
+    }
+    document.getElementById('fg-p2p').style.display = p2p ? '' : 'none';
+    document.getElementById('pool_start').required = !p2p;
+    document.getElementById('pool_end').required = !p2p;
+}
+document.getElementById('subnet').addEventListener('input', updateP2pFields);
+updateP2pFields();
 
 function runDdnsTest() {
     const btn = document.getElementById('ddns-test-btn');

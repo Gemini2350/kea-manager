@@ -1012,7 +1012,11 @@ def add_subnet():
     For the consecutive subnets the network is advanced by its own size
     (10.1.1.0/24 -> 10.1.2.0/24 ...), pool/gateway/relay keep their host
     offsets rebased into each network, and name/zone are numbered
-    (trailing number incremented). Matches the per-island layout."""
+    (trailing number incremented). Matches the per-island layout.
+
+    /30 and /31 are point-to-point: only two usable addresses, one is the
+    relay+gateway, the other the single DHCP address. Pool/gateway/relay
+    inputs are ignored and derived per subnet from p2p_order instead."""
     try:
         config = load_config()
         if not config or "Dhcp4" not in config:
@@ -1038,6 +1042,8 @@ def add_subnet():
             count = 1
         base_net = ipaddress.ip_network(subnet, strict=False)
         existing_nets = {s.get('subnet') for s in config["Dhcp4"]["subnet4"]}
+        p2p = base_net.prefixlen in (30, 31)
+        p2p_gw_first = request.form.get('p2p_order', 'gw_first') != 'dhcp_first'
 
         name = (request.form.get('name') or '').strip()
         group = (request.form.get('group') or '').strip()
@@ -1061,13 +1067,21 @@ def add_subnet():
                 skipped.append(f'{net_i} [exists]')
                 continue
 
+            if p2p:
+                # /31 uses both addresses (RFC 3021), /30 the two host IPs.
+                first = net_i.network_address + (0 if net_i.prefixlen == 31 else 1)
+                second = first + 1
+                gw_ip, dhcp_ip = ((first, second) if p2p_gw_first
+                                  else (second, first))
+                pool_lo = pool_hi = str(dhcp_ip)
+            else:
+                pool_lo = _rebase_ip(pool_start, base_net, net_i)
+                pool_hi = _rebase_ip(pool_end, base_net, net_i)
+
             subnet_data = {
                 "id": next_id + len(added),
                 "subnet": str(net_i),
-                "pools": [{
-                    "pool": f"{_rebase_ip(pool_start, base_net, net_i)}-"
-                            f"{_rebase_ip(pool_end, base_net, net_i)}"
-                }],
+                "pools": [{"pool": f"{pool_lo}-{pool_hi}"}],
                 "option-data": []
             }
 
@@ -1084,16 +1098,22 @@ def add_subnet():
                 _apply_opt82_mode(config, subnet_data, True)
 
             # Relay IP(s) -- essential in relayed setups so KEA matches DHCP
-            # requests (by giaddr) to this subnet.
-            if relay_ips:
-                subnet_data["relay"] = {"ip-addresses": [
-                    _rebase_ip(r, base_net, net_i) for r in relay_ips]}
-
-            if gateway:
+            # requests (by giaddr) to this subnet. On point-to-point nets the
+            # router IP is relay and gateway at once.
+            if p2p:
+                subnet_data["relay"] = {"ip-addresses": [str(gw_ip)]}
                 subnet_data["option-data"].append({
-                    "name": "routers",
-                    "data": _rebase_ip(gateway, base_net, net_i)
-                })
+                    "name": "routers", "data": str(gw_ip)})
+            else:
+                if relay_ips:
+                    subnet_data["relay"] = {"ip-addresses": [
+                        _rebase_ip(r, base_net, net_i) for r in relay_ips]}
+
+                if gateway:
+                    subnet_data["option-data"].append({
+                        "name": "routers",
+                        "data": _rebase_ip(gateway, base_net, net_i)
+                    })
 
             # DNS servers are central, not per island: keep them as-is.
             if dns_servers:
