@@ -19,7 +19,9 @@ A web-based management interface for ISC KEA DHCP4 server, packaged as a lightwe
 - **Zone Subdomains**: set a main domain globally and a subdomain per subnet
   (`studio1` → `studio1.example.lan`), handed out as domain, DNS search list
   (option 119) and DDNS suffix; renaming the main domain re-bases all zones
-- **Static Reservations**: per subnet or group, with override handling and
+- **Static Reservations**: per subnet or group, keyed on MAC address or
+  on the relay circuit-id (DHCP option 82) to pin an IP to a switch port
+  regardless of the connected device; with override handling and
   collapsible per-subnet lists
 - **Dynamic DNS**: forward and reverse zones (PTR records), TSIG keys,
   qualifying suffix and conflict-resolution mode — all from the GUI

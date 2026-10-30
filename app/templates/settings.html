@@ -427,9 +427,20 @@
                             <input type="hidden" name="subnet_index" value="{{ loop.index0 }}">
                             <div class="grid">
                                 <div class="form-group">
-                                    <label>MAC Address:</label>
+                                    <label>Identify by:</label>
+                                    <select name="id_type">
+                                        <option value="mac">MAC address</option>
+                                        <option value="circuit-id">Circuit-ID (DHCP Option 82)</option>
+                                    </select>
+                                    <small style="color: var(--text-muted); display: block; margin-top: 0.25rem;">
+                                        Circuit-ID pins the IP to the relay/switch port that inserts
+                                        option 82 &mdash; whatever device is plugged in.
+                                    </small>
+                                </div>
+                                <div class="form-group">
+                                    <label>MAC / Circuit-ID:</label>
                                     <input type="text" name="mac_address" required
-                                           placeholder="aa:bb:cc:dd:ee:ff">
+                                           placeholder="aa:bb:cc:dd:ee:ff or port7 or 0a:01:07">
                                 </div>
                                 <div class="form-group">
                                     <label>IP Address:</label>
@@ -477,7 +488,7 @@
                             <table style="width: 100%; border-collapse: collapse; margin-top: 1rem;">
                                 <thead>
                                     <tr style="background: var(--surface-2);">
-                                        <th style="padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-strong);">MAC Address</th>
+                                        <th style="padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-strong);">Identifier</th>
                                         <th style="padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-strong);">IP Address</th>
                                         <th style="padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-strong);">Hostname</th>
                                         <th style="padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-strong);">Actions</th>
@@ -486,7 +497,14 @@
                                 <tbody>
                                     {% for reservation in subnet.reservations %}
                                     <tr>
-                                        <td style="padding: 0.75rem; border-bottom: 1px solid var(--border);">{{ reservation['hw-address'] }}</td>
+                                        <td style="padding: 0.75rem; border-bottom: 1px solid var(--border);">
+                                            {% if reservation.get('circuit-id') %}
+                                                <span class="badge" title="Matched via DHCP option 82 (relay circuit-id)" style="font-size: 0.7rem;">Opt 82</span>
+                                                {{ reservation['circuit-id'] }}
+                                            {% else %}
+                                                {{ reservation.get('hw-address', '?') }}
+                                            {% endif %}
+                                        </td>
                                         <td style="padding: 0.75rem; border-bottom: 1px solid var(--border);">{{ reservation['ip-address'] }}</td>
                                         <td style="padding: 0.75rem; border-bottom: 1px solid var(--border);">{{ reservation.hostname or '-' }}</td>
                                         <td style="padding: 0.75rem; border-bottom: 1px solid var(--border);">

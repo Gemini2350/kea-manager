@@ -1072,37 +1072,62 @@ def delete_subnet(subnet_index):
 
     return redirect(url_for('settings'))
 
-def _add_reservation_to_subnet(subnet, mac, ip, hostname, override=False):
+def _parse_reservation_identifier(id_type, value):
+    """Normalize a reservation identifier from the form.
+
+    'mac' -> ('hw-address', 'aa:bb:...'). For 'circuit-id' (DHCP option
+    82 sub-option 1), hex pairs (with or without colons) are stored as
+    plain hex and anything else as quoted text ('port7'), matching KEA's
+    host reservation syntax."""
+    value = (value or '').strip()
+    if id_type == 'circuit-id':
+        compact = value.replace(':', '').replace('-', '')
+        if compact and len(compact) % 2 == 0 and re.fullmatch(r'[0-9a-fA-F]+', compact):
+            return 'circuit-id', compact.lower()
+        return 'circuit-id', f"'{value}'"
+    return 'hw-address', value.lower()
+
+
+def _ensure_reservation_identifiers(config, ident_key):
+    """Make sure kea-dhcp4 considers `ident_key` when matching host
+    reservations (hw-address is a KEA default, circuit-id may not be)."""
+    hri = config['Dhcp4'].setdefault('host-reservation-identifiers',
+                                     ['hw-address', 'circuit-id'])
+    if ident_key not in hri:
+        hri.append(ident_key)
+
+
+def _add_reservation_to_subnet(subnet, ident_key, ident_value, ip, hostname,
+                               override=False):
     """Append a reservation to one subnet dict.
 
-    Without override: skips if the MAC or IP already exists (returns
-    'skip-mac' / 'skip-ip'). With override: removes any existing reservation
-    for the same MAC or the same IP first, then adds the new one (returns
+    ident_key is 'hw-address' or 'circuit-id'. Without override: skips if
+    the identifier or IP already exists (returns 'skip-id' / 'skip-ip').
+    With override: removes any existing reservation for the same
+    identifier or the same IP first, then adds the new one (returns
     'replaced' if something was removed, else 'added')."""
     reservations = subnet.setdefault('reservations', [])
 
+    def same_ident(r):
+        return (r.get(ident_key) or '').lower() == ident_value.lower()
+
+    reservation = {ident_key: ident_value, 'ip-address': ip}
+    if hostname:
+        reservation['hostname'] = hostname
+
     if override:
         before = len(reservations)
-        reservations[:] = [
-            r for r in reservations
-            if (r.get('hw-address') or '').lower() != mac.lower()
-            and r.get('ip-address') != ip
-        ]
+        reservations[:] = [r for r in reservations
+                           if not same_ident(r) and r.get('ip-address') != ip]
         removed = before - len(reservations)
-        reservation = {'hw-address': mac, 'ip-address': ip}
-        if hostname:
-            reservation['hostname'] = hostname
         reservations.append(reservation)
         return 'replaced' if removed else 'added'
 
     for r in reservations:
-        if (r.get('hw-address') or '').lower() == mac.lower():
-            return 'skip-mac'
+        if same_ident(r):
+            return 'skip-id'
         if r.get('ip-address') == ip:
             return 'skip-ip'
-    reservation = {'hw-address': mac, 'ip-address': ip}
-    if hostname:
-        reservation['hostname'] = hostname
     reservations.append(reservation)
     return 'added'
 
@@ -1406,15 +1431,22 @@ def add_reservation():
     try:
         config = load_config()
         subnet_index = int(request.form.get('subnet_index'))
-        mac = (request.form.get('mac_address') or '').strip().lower()
+        id_type = request.form.get('id_type', 'mac')  # 'mac' or 'circuit-id'
+        ident_key, ident_value = _parse_reservation_identifier(
+            id_type, request.form.get('mac_address'))
         ip = (request.form.get('ip_address') or '').strip()
         hostname = (request.form.get('hostname') or '').strip()
         scope = request.form.get('apply_scope', 'single')  # 'single' or a group name
         override = request.form.get('override') == 'on'
 
+        if not ident_value or ident_value == "''":
+            flash('Identifier (MAC or circuit-id) is required!')
+            return redirect(url_for('settings'))
+
         if not (config and "Dhcp4" in config and "subnet4" in config["Dhcp4"]):
             flash('No configuration loaded!')
             return redirect(url_for('settings'))
+        _ensure_reservation_identifiers(config, ident_key)
 
         subnets = config["Dhcp4"]["subnet4"]
         if not (0 <= subnet_index < len(subnets)):
@@ -1422,9 +1454,10 @@ def add_reservation():
             return redirect(url_for('settings'))
 
         if scope == 'single':
-            status = _add_reservation_to_subnet(subnets[subnet_index], mac, ip, hostname, override)
-            if status == 'skip-mac':
-                flash(f'MAC {mac} already reserved in this subnet. '
+            status = _add_reservation_to_subnet(subnets[subnet_index], ident_key,
+                                                ident_value, ip, hostname, override)
+            if status == 'skip-id':
+                flash(f'{ident_value} already reserved in this subnet. '
                       f'Enable "override" to replace it.')
             elif status == 'skip-ip':
                 flash(f'IP {ip} already reserved in this subnet. '
@@ -1463,7 +1496,8 @@ def add_reservation():
             if not (net.network_address < ipaddress.ip_address(target_ip) < net.broadcast_address):
                 skipped.append(f'{name} [out of range]')
                 continue
-            status = _add_reservation_to_subnet(s, mac, target_ip, hostname, override)
+            status = _add_reservation_to_subnet(s, 'hw-address', mac, target_ip,
+                                                hostname, override)
             if status in ('added', 'replaced'):
                 added.append(f'{name} ({target_ip})')
             else:
@@ -2013,9 +2047,10 @@ def reserve_lease():
             return redirect(url_for('leases'))
 
         if scope == 'single':
-            status = _add_reservation_to_subnet(source, mac, ip, hostname, override)
+            status = _add_reservation_to_subnet(source, 'hw-address', mac, ip,
+                                                hostname, override)
             name = source.get('user-context', {}).get('name') or source.get('subnet')
-            if status == 'skip-mac':
+            if status == 'skip-id':
                 flash(f'MAC {mac} already reserved in {name}. '
                       f'Enable "override" to replace it.')
             elif status == 'skip-ip':
@@ -2046,7 +2081,8 @@ def reserve_lease():
             if not (net.network_address < ipaddress.ip_address(target_ip) < net.broadcast_address):
                 skipped.append(f'{name} [out of range]')
                 continue
-            status = _add_reservation_to_subnet(s, mac, target_ip, hostname, override)
+            status = _add_reservation_to_subnet(s, ident_key, ident_value,
+                                                target_ip, hostname, override)
             if status in ('added', 'replaced'):
                 added.append(f'{name} ({target_ip})')
             else:
