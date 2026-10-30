@@ -295,13 +295,16 @@
         {% if config.Dhcp4 and config.Dhcp4.subnet4 %}
             {% for subnet in config.Dhcp4.subnet4 %}
             {% set subnet_loop = loop %}
-            <div class="card" style="margin-bottom: 1rem; border-left: 3px solid var(--accent);">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
-                    <div>
+            {# /30 and /31 point-to-point nets hold a single DHCP address --
+               render them as one slim row instead of a full card. #}
+            {% set p2p = (subnet.subnet.split('/') | last | int(0)) in (30, 31) %}
+            <div class="card" style="margin-bottom: {{ '0.5rem' if p2p else '1rem' }}; border-left: 3px solid var(--accent);{{ ' padding: 0.55rem 1.25rem;' if p2p }}">
+                <div style="display: flex; justify-content: space-between; align-items: {{ 'center' if p2p else 'flex-start' }}; gap: 0.75rem; flex-wrap: wrap;{{ '' if p2p else ' margin-bottom: 1rem;' }}">
+                    <div{% if p2p %} style="display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; min-width: 0;"{% endif %}>
                         {% set subnet_name = subnet.get('user-context', {}).get('name') %}
                         {% set sgroup = subnet_group(subnet) %}
                         {% set gcolor = group_color(sgroup, groups) if sgroup else '' %}
-                        <h4 style="margin-bottom: 0.4rem;">
+                        <h4 style="margin-bottom: {{ '0' if p2p else '0.4rem' }};{{ ' font-size: 0.95rem;' if p2p }}">
                             {% if subnet_name %}{{ subnet_name }}{% else %}Subnet {{ subnet.id }}{% endif %}
                             {% if sgroup %}
                             <span style="display: inline-block; margin-left: 0.35rem; padding: 0.1rem 0.55rem; border-radius: 999px; font-size: 0.68rem; font-weight: 600; vertical-align: middle; text-transform: uppercase; letter-spacing: 0.04em; background: {{ gcolor }}24; color: {{ gcolor }}; border: 1px solid {{ gcolor }}66;">{{ sgroup }}</span>
@@ -311,13 +314,21 @@
                             {% endif %}
                             <span style="color: var(--text-faint); font-weight: normal; font-size: 0.9rem;">&mdash; {{ subnet.subnet }} (id {{ subnet.id }})</span>
                         </h4>
-                        {% if subnet.pools %}
-                            <p><strong>Pool:</strong> {{ subnet.pools[0].pool }}</p>
-                        {% endif %}
-                        {% if subnet['option-data'] %}
-                            {% for option in subnet['option-data'] %}
-                                <p><strong>{{ option.name|title }}:</strong> {{ option.data }}</p>
-                            {% endfor %}
+                        {% if p2p %}
+                            {% set p2p_gw = subnet.get('relay', {}).get('ip-addresses', [''])[0]
+                               or (subnet.get('option-data', []) | selectattr('name', 'equalto', 'routers') | map(attribute='data') | first) %}
+                            <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">
+                                Router {{ p2p_gw or '?' }} &middot; DHCP {{ subnet.pools[0].pool.split('-')[0] if subnet.pools else '?' }}
+                            </span>
+                        {% else %}
+                            {% if subnet.pools %}
+                                <p><strong>Pool:</strong> {{ subnet.pools[0].pool }}</p>
+                            {% endif %}
+                            {% if subnet['option-data'] %}
+                                {% for option in subnet['option-data'] %}
+                                    <p><strong>{{ option.name|title }}:</strong> {{ option.data }}</p>
+                                {% endfor %}
+                            {% endif %}
                         {% endif %}
                     </div>
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
@@ -330,9 +341,9 @@
                                 {% endfor %}
                             </select>
                         </form>
-                        <button type="button" class="btn" onclick="toggleEditSubnet({{ loop.index0 }})">Edit</button>
+                        <button type="button" class="btn" {% if p2p %}style="padding: 0.3rem 0.7rem; font-size: 0.8rem;"{% endif %} onclick="toggleEditSubnet({{ loop.index0 }})">Edit</button>
                         <form method="POST" action="{{ url_for('delete_subnet', subnet_index=loop.index0) }}" style="display: inline;">
-                            <button type="submit" class="btn btn-danger"
+                            <button type="submit" class="btn btn-danger" {% if p2p %}style="padding: 0.3rem 0.7rem; font-size: 0.8rem;"{% endif %}
                                     onclick="return confirm('Are you sure you want to delete this subnet?')">
                                 Delete
                             </button>
@@ -400,8 +411,11 @@
                     </form>
                 </div>
 
-                <!-- Static Reservations (collapsible) -->
-                <details class="lease-group" id="reservations-{{ loop.index0 }}" style="margin-top: 1.5rem;">
+                <!-- Static Reservations (collapsible); hidden on slim p2p
+                     rows unless some exist -- a single-address pool rarely
+                     needs one, and Edit still offers everything. -->
+                {% if not p2p or subnet.reservations %}
+                <details class="lease-group" id="reservations-{{ loop.index0 }}" style="margin-top: {{ '0.6rem' if p2p else '1.5rem' }};">
                     <summary>
                         <span>Static Reservations</span>
                         <span class="badge badge-accent">{{ subnet.reservations|length if subnet.reservations else 0 }}</span>
@@ -507,6 +521,7 @@
                     {% endif %}
                     </div>
                 </details>
+                {% endif %}
             </div>
             {% endfor %}
         {% else %}
