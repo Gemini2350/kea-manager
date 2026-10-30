@@ -717,7 +717,8 @@ def settings():
     # Flatten the DDNS settings into a simple dict for the template.
     ddns_view = _ddns_view(config, ddns)
     return render_template('settings.html', config=config, ddns=ddns_view,
-                           groups=get_groups())
+                           groups=get_groups(),
+                           single_lease_per_mac=_single_lease_per_mac_enabled())
 
 
 def _ddns_view(dhcp4_cfg, ddns_cfg):
@@ -919,6 +920,18 @@ def update_settings():
         # VMs sharing a DUID -- otherwise they evict each other's leases.
         config["Dhcp4"]["match-client-id"] = \
             request.form.get('match_by_mac') != 'on'
+
+        # App-level option: keep only the newest lease per MAC across
+        # subnets; stale leases and their DNS records are cleaned up by
+        # a background watcher.
+        get_groups()  # makes sure manager.json exists (runs migration)
+        ms = load_manager_settings() or {}
+        ms['single-lease-per-mac'] = \
+            request.form.get('single_lease_per_mac') == 'on'
+        try:
+            save_manager_settings(ms)
+        except OSError as e:
+            print(f"update_settings: cannot persist manager settings ({e})")
 
         # Initialize control-socket section
         if "control-socket" not in config["Dhcp4"]:
@@ -1728,6 +1741,52 @@ def _leases_from_socket():
     return leases
 
 
+def _single_lease_per_mac_enabled():
+    return bool((load_manager_settings() or {}).get('single-lease-per-mac'))
+
+
+def _cleanup_duplicate_leases():
+    """Keep only the newest lease per MAC across subnets.
+
+    When a device moves to another subnet (common with training gear
+    re-plugged between islands), its old lease would linger until expiry
+    -- together with its DNS records. This removes the older leases via
+    lease4-del with update-ddns, so KEA also queues the DNS removal
+    (A + PTR) for them."""
+    leases = _leases_from_socket()
+    if not leases:
+        return
+    by_mac = {}
+    for l in leases:
+        if l.get('mac'):
+            by_mac.setdefault(l['mac'].lower(), []).append(l)
+    for mac, entries in by_mac.items():
+        if len(entries) < 2:
+            continue
+        if len({l.get('subnet_id') for l in entries}) < 2:
+            continue  # duplicates within one subnet are KEA's business
+        entries.sort(key=lambda l: _as_float(l.get('expire')))
+        newest = entries[-1]
+        for stale in entries[:-1]:
+            resp = kea_ctrl_command('lease4-del', {'ip-address': stale['ip'],
+                                                   'update-ddns': True})
+            print(f"single-lease-per-mac: removed stale lease {stale['ip']} "
+                  f"(subnet {stale.get('subnet_id')}) for MAC {mac}, now in "
+                  f"subnet {newest.get('subnet_id')} ({newest['ip']}); "
+                  f"result={resp.get('result')}")
+
+
+def _duplicate_lease_watcher():
+    interval = int(os.environ.get('KEA_DUP_LEASE_INTERVAL', '30'))
+    while True:
+        time.sleep(interval)
+        try:
+            if not DEV_MODE and _single_lease_per_mac_enabled():
+                _cleanup_duplicate_leases()
+        except Exception as e:
+            print(f"single-lease-per-mac: cleanup error: {e}")
+
+
 def parse_lease_file():
     """Return the active leases, with dedupe and stale-cache fallback.
 
@@ -2127,6 +2186,7 @@ def _watch_tls_cert(path):
 
 
 if __name__ == '__main__':
+    threading.Thread(target=_duplicate_lease_watcher, daemon=True).start()
     ssl_ctx = None
     if os.path.exists(TLS_CERT) and os.path.exists(TLS_KEY):
         ssl_ctx = (TLS_CERT, TLS_KEY)

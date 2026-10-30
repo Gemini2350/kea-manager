@@ -63,6 +63,14 @@
                     cloned VMs sharing a machine-id/DUID, which otherwise evict each other's leases</small>
             </div>
 
+            <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" id="single_lease_per_mac" name="single_lease_per_mac" style="width: auto; margin: 0;"
+                       {% if single_lease_per_mac %}checked{% endif %}>
+                <label for="single_lease_per_mac" style="margin: 0; font-weight: 500;">Keep only the newest lease per MAC</label>
+                <small style="color: var(--text-muted);">&mdash; when a device moves to another subnet, its stale
+                    leases elsewhere (and their DNS records) are removed automatically within ~30s</small>
+            </div>
+
             <div style="text-align: center;">
                 <button type="submit" class="btn btn-success">Update Global Settings</button>
             </div>
