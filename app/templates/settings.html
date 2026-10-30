@@ -292,6 +292,13 @@
                                placeholder="studio1">
                     </div>
                 </div>
+                <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <input type="checkbox" id="add-opt82" name="opt82_mode" style="width: auto; margin: 0;">
+                    <label for="add-opt82" style="margin: 0; font-weight: 500;">Option-82 mode (port-based IPs)</label>
+                    <small style="color: var(--text-muted);">
+                        &mdash; reservations default to the switch port (circuit-id) and leases record the port
+                    </small>
+                </div>
                 <p style="color: var(--text-muted); font-size: 0.82rem; margin-bottom: 1rem;">
                     Relay IP is the address the DHCP relay inserts as <code>giaddr</code>
                     (typically the router in the target subnet). Required when clients
@@ -323,6 +330,9 @@
                             {% if subnet_name %}{{ subnet_name }}{% else %}Subnet {{ subnet.id }}{% endif %}
                             {% if sgroup %}
                             <span style="display: inline-block; margin-left: 0.35rem; padding: 0.1rem 0.55rem; border-radius: 999px; font-size: 0.68rem; font-weight: 600; vertical-align: middle; text-transform: uppercase; letter-spacing: 0.04em; background: {{ gcolor }}24; color: {{ gcolor }}; border: 1px solid {{ gcolor }}66;">{{ sgroup }}</span>
+                            {% endif %}
+                            {% if subnet_opt82(subnet) %}
+                            <span style="display: inline-block; margin-left: 0.35rem; padding: 0.1rem 0.55rem; border-radius: 999px; font-size: 0.68rem; font-weight: 600; vertical-align: middle; text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border-strong);" title="Option-82 mode: reservations default to the relay circuit-id and leases record the switch port">Opt 82</span>
                             {% endif %}
                             <span style="color: var(--text-faint); font-weight: normal; font-size: 0.9rem;">&mdash; {{ subnet.subnet }} (id {{ subnet.id }})</span>
                         </h4>
@@ -402,6 +412,14 @@
                                        placeholder="studio1">
                             </div>
                         </div>
+                        <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" id="opt82-{{ loop.index0 }}" name="opt82_mode"
+                                   style="width: auto; margin: 0;" {% if subnet_opt82(subnet) %}checked{% endif %}>
+                            <label for="opt82-{{ loop.index0 }}" style="margin: 0; font-weight: 500;">Option-82 mode (port-based IPs)</label>
+                            <small style="color: var(--text-muted);">
+                                &mdash; reservations default to the switch port (circuit-id) and leases record the port
+                            </small>
+                        </div>
                         <p style="color: var(--text-muted); font-size: 0.82rem; margin-bottom: 1rem;">
                             Reservations and the subnet id are kept. Leave DNS/Domain empty to
                             inherit the global settings; the domain is also handed out as DNS
@@ -437,8 +455,8 @@
                                 <div class="form-group">
                                     <label>Identify by:</label>
                                     <select name="id_type">
-                                        <option value="mac">MAC address</option>
-                                        <option value="circuit-id">Circuit-ID (DHCP Option 82)</option>
+                                        <option value="mac" {% if not subnet_opt82(subnet) %}selected{% endif %}>MAC address</option>
+                                        <option value="circuit-id" {% if subnet_opt82(subnet) %}selected{% endif %}>Circuit-ID (DHCP Option 82)</option>
                                     </select>
                                     <small style="color: var(--text-muted); display: block; margin-top: 0.25rem;">
                                         Circuit-ID pins the IP to the relay/switch port that inserts

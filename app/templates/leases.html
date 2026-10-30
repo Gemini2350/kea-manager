@@ -44,7 +44,7 @@
     {% endif %}
 
     <div style="margin-bottom: 1.25rem;">
-        <input type="search" id="lease-search" placeholder="Search by IP, MAC, vendor, hostname, client-id..."
+        <input type="search" id="lease-search" placeholder="Search by IP, MAC, port, vendor, hostname, client-id..."
                oninput="filterLeases()">
         <div id="search-summary" style="margin-top: 0.5rem; color: var(--text-muted); font-size: 0.85rem;">
             <strong>Total Active Leases:</strong> {{ total }}
@@ -58,16 +58,19 @@
                 <span>{{ group.name }}</span>
                 {% if group.cidr %}<span style="color: var(--text-faint); font-weight: normal;">{{ group.cidr }}</span>{% endif %}
                 {% if group.pool %}<span style="color: var(--text-faint); font-weight: normal; font-size: 0.85em;" title="DHCP pool">Pool: {{ group.pool }}</span>{% endif %}
+                {% if group.opt82 %}<span class="badge" style="font-size: 0.68rem;" title="Option-82 mode: leases record the switch port (circuit-id) and reservations default to it">Opt 82</span>{% endif %}
                 <span class="badge badge-accent" style="margin-left: auto;">{{ group.leases|length }} lease{{ '' if group.leases|length == 1 else 's' }}</span>
             </summary>
             <div style="padding: 0 1rem 1rem 1rem;">
                 {% if group.leases %}
+                {% set show_cid = group.opt82 or (group.leases | selectattr('circuit_id') | list) %}
                 <div style="overflow-x: auto;">
                     <table>
                         <thead>
                             <tr>
                                 <th>IP Address</th>
                                 <th>MAC Address</th>
+                                {% if show_cid %}<th title="Relay circuit-id (DHCP option 82) -- the switch port behind this lease">Port (Opt 82)</th>{% endif %}
                                 <th>Vendor</th>
                                 <th>Hostname</th>
                                 <th>Subnet ID</th>
@@ -81,6 +84,7 @@
                             <tr class="lease-row">
                                 <td><strong>{{ lease.ip }}</strong></td>
                                 <td>{{ lease.mac }}</td>
+                                {% if show_cid %}<td>{{ lease.circuit_id or '-' }}</td>{% endif %}
                                 <td>{{ lease.vendor if lease.vendor else '-' }}</td>
                                 <td>{{ lease.hostname }}</td>
                                 <td>{{ lease.subnet_id }}</td>
@@ -96,7 +100,9 @@
                                             data-ip="{{ lease.ip }}"
                                             data-mac="{{ lease.mac }}"
                                             data-hostname="{{ lease.hostname }}"
-                                            data-vendor="{{ lease.vendor }}">
+                                            data-vendor="{{ lease.vendor }}"
+                                            data-circuit-id="{{ lease.circuit_id or '' }}"
+                                            data-opt82="{{ '1' if group.opt82 else '' }}">
                                         Reserve
                                     </button>
                                     {% endif %}
@@ -146,7 +152,14 @@
                            style="font-family: ui-monospace, SFMono-Regular, monospace;">
                 </div>
                 <div class="form-group">
-                    <label for="rsv-mac">MAC Address</label>
+                    <label for="rsv-idtype">Identify by</label>
+                    <select id="rsv-idtype" name="id_type" onchange="rsvIdTypeChanged()">
+                        <option value="mac">MAC address (this device)</option>
+                        <option value="circuit-id">Circuit-ID / switch port (DHCP Option 82)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="rsv-mac" id="rsv-ident-label">MAC Address</label>
                     <input type="text" id="rsv-mac" name="mac_address" required
                            style="font-family: ui-monospace, SFMono-Regular, monospace;">
                     <small id="rsv-vendor-hint" style="color: var(--text-muted); display: block; margin-top: 0.25rem;"></small>
@@ -245,14 +258,32 @@ function expandAll(open) {
 }
 
 // --- Reserve-lease modal ---
-function openReserveModal(ip, mac, hostname, vendor) {
+let rsvIdentifiers = {};   // id_type -> pre-filled value for the open lease
+let rsvVendor = '';
+
+function rsvIdTypeChanged() {
+    const t = document.getElementById('rsv-idtype').value;
+    document.getElementById('rsv-mac').value = rsvIdentifiers[t] || '';
+    document.getElementById('rsv-ident-label').textContent =
+        t === 'circuit-id' ? 'Circuit-ID (switch port)' : 'MAC Address';
+    document.getElementById('rsv-vendor-hint').textContent =
+        t === 'circuit-id'
+            ? 'Reserves the port: whatever device is plugged in gets this IP.'
+            : (rsvVendor ? 'Vendor: ' + rsvVendor : '');
+}
+
+function openReserveModal(ip, mac, hostname, vendor, circuitId, opt82) {
+    rsvIdentifiers = { 'mac': mac || '', 'circuit-id': circuitId || '' };
+    rsvVendor = vendor || '';
+    const sel = document.getElementById('rsv-idtype');
+    // Without a recorded circuit-id there is nothing to reserve by port.
+    sel.querySelector('option[value="circuit-id"]').disabled = !circuitId;
+    sel.value = (opt82 && circuitId) ? 'circuit-id' : 'mac';
     document.getElementById('rsv-ip').value = ip || '';
-    document.getElementById('rsv-mac').value = mac || '';
+    rsvIdTypeChanged();
     // 'Unknown' is the placeholder we use in the lease parser; don't pre-fill it.
     const cleanHost = (hostname && hostname !== 'Unknown') ? hostname : '';
     document.getElementById('rsv-hostname').value = cleanHost;
-    document.getElementById('rsv-vendor-hint').textContent =
-        vendor ? ('Vendor: ' + vendor) : '';
     document.getElementById('reserve-modal').style.display = 'flex';
     // Focus the hostname so users can fill it in immediately if missing.
     setTimeout(() => document.getElementById('rsv-hostname').focus(), 50);
@@ -270,7 +301,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 btn.dataset.ip,
                 btn.dataset.mac,
                 btn.dataset.hostname,
-                btn.dataset.vendor
+                btn.dataset.vendor,
+                btn.dataset.circuitId,
+                btn.dataset.opt82 === '1'
             );
         });
     });

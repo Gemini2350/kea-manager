@@ -23,6 +23,11 @@ A web-based management interface for ISC KEA DHCP4 server, packaged as a lightwe
   on the relay circuit-id (DHCP option 82) to pin an IP to a switch port
   regardless of the connected device; with override handling and
   collapsible per-subnet lists
+- **Option-82 Mode per Subnet**: a subnet toggle for port-based setups —
+  KEA records the relay-agent info in every lease
+  (`store-extended-info`), the lease view gains a "Port (Opt 82)" column,
+  the Reserve dialog can pin the port instead of the MAC, and new
+  reservations in that subnet default to circuit-id
 - **Dynamic DNS**: forward and reverse zones (PTR records), TSIG keys,
   qualifying suffix and conflict-resolution mode — all from the GUI
 - **Client Identification Switch**: identify clients by MAC only

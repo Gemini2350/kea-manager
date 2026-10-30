@@ -1022,6 +1022,10 @@ def add_subnet():
         if group and group in {g['name'] for g in get_groups()}:
             subnet_data.setdefault("user-context", {})["group"] = group
 
+        # Option-82 mode: IPs in this subnet are pinned to switch ports.
+        if request.form.get('opt82_mode') == 'on':
+            _apply_opt82_mode(config, subnet_data, True)
+
         # Relay IP(s) -- essential in relayed setups so KEA matches DHCP
         # requests (by giaddr) to this subnet. Accepts comma-separated list.
         relay_raw = (request.form.get('relay') or '').strip()
@@ -1108,6 +1112,33 @@ def _ensure_reservation_identifiers(config, ident_key):
                                      ['hw-address', 'circuit-id'])
     if ident_key not in hri:
         hri.append(ident_key)
+
+
+def subnet_opt82(subnet):
+    """True when the subnet runs in Option-82 mode (port-based IPs)."""
+    return bool((subnet.get('user-context') or {}).get('opt82'))
+
+
+def _apply_opt82_mode(config, subnet, enabled):
+    """Set or clear a subnet's Option-82 mode.
+
+    Enabled: reservations in this subnet default to the relay circuit-id,
+    and store-extended-info makes KEA record the relay-agent info in each
+    lease, so the GUI can show the switch port behind a lease and reserve
+    it directly."""
+    uc = subnet.get('user-context') or {}
+    if enabled:
+        uc['opt82'] = True
+        subnet['user-context'] = uc
+        subnet['store-extended-info'] = True
+        _ensure_reservation_identifiers(config, 'circuit-id')
+    else:
+        uc.pop('opt82', None)
+        if uc:
+            subnet['user-context'] = uc
+        else:
+            subnet.pop('user-context', None)
+        subnet.pop('store-extended-info', None)
 
 
 def _add_reservation_to_subnet(subnet, ident_key, ident_value, ip, hostname,
@@ -1250,6 +1281,7 @@ def group_color(name, groups=None):
 
 
 app.jinja_env.globals['subnet_group'] = subnet_group
+app.jinja_env.globals['subnet_opt82'] = subnet_opt82
 app.jinja_env.globals['get_groups'] = get_groups
 app.jinja_env.globals['group_color'] = group_color
 
@@ -1396,6 +1428,8 @@ def edit_subnet(subnet_index):
             s['user-context'] = uc
         else:
             s.pop('user-context', None)
+
+        _apply_opt82_mode(config, s, request.form.get('opt82_mode') == 'on')
 
         relay = (request.form.get('relay') or '').strip()
         if relay:
@@ -1665,6 +1699,39 @@ _LEASE_CACHE_TTL = 30  # seconds; how long a previous good result is reused
 _LEASE_CACHE_FRESH_TTL = 10
 
 
+def _decode_circuit_id(lease):
+    """Extract the relay circuit-id (option 82 sub-option 1) from a
+    lease's user-context, recorded there by store-extended-info.
+
+    Newer KEA: {"ISC": {"relay-agent-info": {"sub-options": "0x0104..."}}};
+    older versions stored the hex string directly. Returns printable text
+    ('port7'), colon-hex otherwise, '' when absent."""
+    rai = ((lease.get('user-context') or {}).get('ISC') or {}).get('relay-agent-info')
+    if isinstance(rai, dict):
+        rai = rai.get('sub-options')
+    if not isinstance(rai, str):
+        return ''
+    hexstr = rai[2:] if rai.lower().startswith('0x') else rai
+    try:
+        data = bytes.fromhex(hexstr)
+    except ValueError:
+        return ''
+    # The blob holds the option 82 sub-option TLVs; some writers include
+    # the outer option header (code 82 + total length) -- skip it then.
+    if len(data) >= 2 and data[0] == 82 and data[1] == len(data) - 2:
+        data = data[2:]
+    i = 0
+    while i + 2 <= len(data):
+        code, length = data[i], data[i + 1]
+        value = data[i + 2:i + 2 + length]
+        if code == 1 and value:   # sub-option 1 = circuit-id
+            if all(32 <= b < 127 for b in value):
+                return value.decode('ascii')
+            return ':'.join(f'{b:02x}' for b in value)
+        i += 2 + length
+    return ''
+
+
 def _read_lease_csv(path):
     """Read one KEA leases CSV and return a dict {ip: lease}. Missing file
     is not an error -- '.2' often doesn't exist outside LFC."""
@@ -1688,6 +1755,15 @@ def _read_lease_csv(path):
         if len(parts) < 10 or not parts[0]:
             continue
         ip = parts[0]
+        # Optional trailing user_context column (commas in it are escaped
+        # as &#x2c by KEA, so the split above stays intact).
+        circuit_id = ''
+        if len(parts) >= 11 and parts[10]:
+            try:
+                uc = json.loads(parts[10].replace('&#x2c', ','))
+                circuit_id = _decode_circuit_id({'user-context': uc})
+            except (ValueError, TypeError):
+                pass
         result[ip] = {
             'ip': ip,
             'mac': parts[1],
@@ -1698,6 +1774,7 @@ def _read_lease_csv(path):
             'subnet_id': parts[5],
             'hostname': parts[8] if parts[8] else 'Unknown',
             'state': parts[9],
+            'circuit_id': circuit_id,
         }
     return result
 
@@ -1737,6 +1814,7 @@ def _leases_from_socket():
             'subnet_id': str(l.get('subnet-id', '')),
             'hostname': l.get('hostname') or 'Unknown',
             'state': str(l.get('state', 0)),
+            'circuit_id': _decode_circuit_id(l),
         })
     return leases
 
@@ -1875,6 +1953,7 @@ def group_leases_by_subnet(active_leases, config):
             'cidr': cidr,
             'pool': ', '.join(p.get('pool', '') for p in pools if p.get('pool')),
             'subnet_id': s.get('id'),
+            'opt82': subnet_opt82(s),
             'network': net,
             # For hiding the Reserve button on already-reserved leases.
             'reserved_macs': {(r.get('hw-address') or '').lower()
@@ -1884,7 +1963,8 @@ def group_leases_by_subnet(active_leases, config):
             'leases': [],
         })
 
-    unassigned = {'name': 'Unassigned', 'cidr': '', 'subnet_id': None, 'network': None, 'leases': []}
+    unassigned = {'name': 'Unassigned', 'cidr': '', 'subnet_id': None,
+                  'opt82': False, 'network': None, 'leases': []}
 
     for lease in active_leases:
         try:
@@ -2062,7 +2142,9 @@ def reserve_lease():
     """
     try:
         ip = (request.form.get('ip_address') or '').strip()
-        mac = (request.form.get('mac_address') or '').strip().lower()
+        id_type = request.form.get('id_type', 'mac')  # 'mac' or 'circuit-id'
+        ident_key, ident_value = _parse_reservation_identifier(
+            id_type, request.form.get('mac_address'))
         hostname = (request.form.get('hostname') or '').strip()
         scope = request.form.get('apply_scope', 'single')  # 'single' or a group name
         override = request.form.get('override') == 'on'
@@ -2071,8 +2153,8 @@ def reserve_lease():
         if hostname.lower() == 'unknown':
             hostname = ''
 
-        if not ip or not mac:
-            flash('IP and MAC are required to create a reservation.')
+        if not ip or not ident_value or ident_value == "''":
+            flash('IP and an identifier (MAC or circuit-id) are required.')
             return redirect(url_for('leases'))
 
         try:
@@ -2085,6 +2167,7 @@ def reserve_lease():
         if not config or 'Dhcp4' not in config or 'subnet4' not in config['Dhcp4']:
             flash('No subnets configured -- cannot add a reservation.')
             return redirect(url_for('leases'))
+        _ensure_reservation_identifiers(config, ident_key)
 
         subnets = config['Dhcp4']['subnet4']
 
@@ -2106,11 +2189,11 @@ def reserve_lease():
             return redirect(url_for('leases'))
 
         if scope == 'single':
-            status = _add_reservation_to_subnet(source, 'hw-address', mac, ip,
-                                                hostname, override)
+            status = _add_reservation_to_subnet(source, ident_key, ident_value,
+                                                ip, hostname, override)
             name = source.get('user-context', {}).get('name') or source.get('subnet')
             if status == 'skip-id':
-                flash(f'MAC {mac} already reserved in {name}. '
+                flash(f'{ident_value} already reserved in {name}. '
                       f'Enable "override" to replace it.')
             elif status == 'skip-ip':
                 flash(f'IP {ip} already reserved in {name}. '
@@ -2119,7 +2202,7 @@ def reserve_lease():
                 save_config(config)
                 restart_kea_service()
                 verb = 'Replaced reservation:' if status == 'replaced' else 'Reserved'
-                flash(f'{verb} {ip} -> {mac}'
+                flash(f'{verb} {ip} -> {ident_value}'
                       + (f' ({hostname})' if hostname else '')
                       + f' in {name}. KEA was restarted.')
             return redirect(url_for('leases'))
@@ -2150,7 +2233,7 @@ def reserve_lease():
         if added:
             save_config(config)
             restart_kea_service()
-            msg = f'Reserved {mac} in {len(added)} {scope} subnets: ' + ', '.join(added)
+            msg = f'Reserved {ident_value} in {len(added)} {scope} subnets: ' + ', '.join(added)
             if skipped:
                 msg += '. Skipped: ' + ', '.join(skipped)
             flash(msg)
