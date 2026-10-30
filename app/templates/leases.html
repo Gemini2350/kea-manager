@@ -18,7 +18,7 @@
     <!-- Server status + quick actions (from the former dashboard) -->
     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; padding: 0.75rem 1rem; margin-bottom: 1.25rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);">
         <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 1.25rem; color: var(--text-muted); font-size: 0.85rem;">
-            <span>
+            <span id="srv-status">
                 {% if status == 'running' %}
                     <span class="status-indicator status-online"></span><span style="color: var(--text); font-weight: 500;">Running</span>{% if uptime %} &middot; up {{ uptime }}{% endif %}
                 {% elif status == 'dev' %}
@@ -51,90 +51,9 @@
         </div>
     </div>
 
-    {% if groups %}
-        {% for group in groups %}
-        <details class="lease-group" data-group-name="{{ group.name|lower }}" data-group-cidr="{{ group.cidr }}" {% if group.leases %}open{% endif %}>
-            <summary>
-                <span>{{ group.name }}</span>
-                {% if group.cidr %}<span style="color: var(--text-faint); font-weight: normal;">{{ group.cidr }}</span>{% endif %}
-                {% if group.pool %}<span style="color: var(--text-faint); font-weight: normal; font-size: 0.85em;" title="DHCP pool">Pool: {{ group.pool }}</span>{% endif %}
-                {% if group.opt82 %}<span class="badge" style="font-size: 0.68rem;" title="Option-82 mode: leases record the switch port (circuit-id) and reservations default to it">Opt 82</span>{% endif %}
-                <span class="badge badge-accent" style="margin-left: auto;">{{ group.leases|length }} lease{{ '' if group.leases|length == 1 else 's' }}</span>
-            </summary>
-            <div style="padding: 0 1rem 1rem 1rem;">
-                {% if group.leases %}
-                {% set show_cid = group.opt82 or (group.leases | selectattr('circuit_id') | list) %}
-                <div style="overflow-x: auto;">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>IP Address</th>
-                                <th>MAC Address</th>
-                                {% if show_cid %}<th title="Relay circuit-id (DHCP option 82) -- the switch port behind this lease">Port (Opt 82)</th>{% endif %}
-                                <th>Vendor</th>
-                                <th>Hostname</th>
-                                <th>Subnet ID</th>
-                                <th>Lifetime (sec)</th>
-                                <th>Expires</th>
-                                <th>Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for lease in group.leases %}
-                            <tr class="lease-row">
-                                <td><strong>{{ lease.ip }}</strong></td>
-                                <td>{{ lease.mac }}</td>
-                                {% if show_cid %}<td>{{ lease.circuit_id or '-' }}</td>{% endif %}
-                                <td>{{ lease.vendor if lease.vendor else '-' }}</td>
-                                <td>{{ lease.hostname }}</td>
-                                <td>{{ lease.subnet_id }}</td>
-                                <td>{{ lease.lifetime }}</td>
-                                <td>{{ lease.expire }}</td>
-                                <td>
-                                    {% if lease.reserved %}
-                                    <span class="badge" title="A static reservation already exists for this MAC or IP"
-                                          style="font-size: 0.75rem;">Reserved</span>
-                                    {% else %}
-                                    <button type="button" class="btn btn-secondary reserve-btn"
-                                            style="padding: 0.2rem 0.55rem; font-size: 0.8rem;"
-                                            data-ip="{{ lease.ip }}"
-                                            data-mac="{{ lease.mac }}"
-                                            data-hostname="{{ lease.hostname }}"
-                                            data-vendor="{{ lease.vendor }}"
-                                            data-circuit-id="{{ lease.circuit_id or '' }}"
-                                            data-opt82="{{ '1' if group.opt82 else '' }}">
-                                        Reserve
-                                    </button>
-                                    {% endif %}
-                                    <button type="button" class="btn btn-danger delete-lease-btn"
-                                            style="padding: 0.2rem 0.55rem; font-size: 0.8rem;"
-                                            data-ip="{{ lease.ip }}"
-                                            data-hostname="{{ lease.hostname }}">
-                                        Delete
-                                    </button>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% else %}
-                <p style="color: var(--text-muted); padding: 0.25rem 0;">No leases in this subnet.</p>
-                {% endif %}
-            </div>
-        </details>
-        {% endfor %}
-    {% else %}
-        <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
-            <h4 style="margin-bottom: 0.5rem;">No Active Leases Found</h4>
-            <p>This could mean:</p>
-            <ul style="text-align: left; display: inline-block; margin-top: 0.75rem;">
-                <li>No devices have requested DHCP leases yet</li>
-                <li>Lease file is not accessible or empty</li>
-                <li>DHCP server is not running or configured</li>
-            </ul>
-        </div>
-    {% endif %}
+    <div id="lease-groups">
+        {% include '_lease_groups.html' %}
+    </div>
 
     <!-- Reservation modal -->
     <div id="reserve-modal" style="display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); align-items: center; justify-content: center; z-index: 100;" onclick="if (event.target === this) closeReserveModal();">
@@ -204,54 +123,106 @@
 </div>
 
 <script>
-// --- Auto-refresh ---
-const REFRESH_INTERVAL = 30; // seconds
-let refreshSecondsLeft = REFRESH_INTERVAL;
-let refreshTimer = null;
+// --- Live updates (server-sent events) ---
+// The server pushes the rendered lease groups over /leases/stream whenever
+// something changed; the DOM is swapped in place, so search text, scroll
+// position and open/closed groups survive. The old 30s full-page reload
+// remains only as a fallback for browsers without EventSource.
 let autoRefreshEnabled = localStorage.getItem('leasesAutoRefresh') !== 'off';
+let leaseTotal = {{ total }};
+let es = null;
+let esConnected = false;
+let pendingUpdate = null;   // buffered while the reserve modal is open
 
 function updateAutoRefreshUI() {
     const btn = document.getElementById('autorefresh-toggle');
     const status = document.getElementById('autorefresh-status');
     if (autoRefreshEnabled) {
-        btn.textContent = 'Auto: On';
-        const searchHasText = document.getElementById('lease-search').value.trim().length > 0;
-        if (searchHasText) {
-            status.textContent = 'paused (search active)';
-        } else {
-            status.textContent = 'next reload in ' + refreshSecondsLeft + 's';
-        }
+        btn.textContent = 'Live: On';
+        status.innerHTML = esConnected
+            ? '<span class="status-indicator status-online"></span>live'
+            : 'connecting…';
     } else {
-        btn.textContent = 'Auto: Off';
+        btn.textContent = 'Live: Off';
         status.textContent = '';
     }
 }
 
-function tickAutoRefresh() {
-    if (!autoRefreshEnabled) { updateAutoRefreshUI(); return; }
-    const modalOpen = document.getElementById('reserve-modal').style.display === 'flex';
-    const searchHasText = document.getElementById('lease-search').value.trim().length > 0;
-    if (!searchHasText && !modalOpen) {
-        refreshSecondsLeft--;
-        if (refreshSecondsLeft <= 0) {
-            location.reload();
-            return;
-        }
+function updateStatusBar(status, uptime) {
+    const el = document.getElementById('srv-status');
+    if (!el) return;
+    const label = (cls, text, extra) =>
+        '<span class="status-indicator ' + cls + '"></span>' +
+        '<span style="color: var(--text); font-weight: 500;">' + text + '</span>' + (extra || '');
+    if (status === 'running') {
+        el.innerHTML = label('status-online', 'Running', uptime ? ' &middot; up ' + uptime : '');
+    } else if (status === 'dev') {
+        el.innerHTML = label('status-online', 'Dev Mode');
+    } else {
+        el.innerHTML = label('status-offline', 'Not reachable');
     }
-    updateAutoRefreshUI();
+}
+
+function applyUpdate(d) {
+    // Remember open/closed state per group before swapping the DOM.
+    const openState = {};
+    document.querySelectorAll('#lease-groups details.lease-group').forEach(g => {
+        openState[g.dataset.groupName + '|' + g.dataset.groupCidr] = g.open;
+    });
+    document.getElementById('lease-groups').innerHTML = d.html;
+    document.querySelectorAll('#lease-groups details.lease-group').forEach(g => {
+        const key = g.dataset.groupName + '|' + g.dataset.groupCidr;
+        if (key in openState) g.open = openState[key];
+    });
+    leaseTotal = d.total;
+    updateStatusBar(d.status, d.uptime);
+    filterLeases();   // re-apply any active search to the new rows
+}
+
+function startStream() {
+    if (es || !window.EventSource) return;
+    es = new EventSource('{{ url_for('leases_stream') }}');
+    es.addEventListener('leases', (e) => {
+        esConnected = true;
+        const d = JSON.parse(e.data);
+        const modalOpen = document.getElementById('reserve-modal').style.display === 'flex';
+        if (modalOpen) {
+            pendingUpdate = d;   // don't swap the DOM under an open form
+        } else {
+            applyUpdate(d);
+        }
+        updateAutoRefreshUI();
+    });
+    es.onopen = () => { esConnected = true; updateAutoRefreshUI(); };
+    // EventSource reconnects by itself; just reflect the state.
+    es.onerror = () => { esConnected = false; updateAutoRefreshUI(); };
+}
+
+function stopStream() {
+    if (es) { es.close(); es = null; }
+    esConnected = false;
 }
 
 function toggleAutoRefresh() {
     autoRefreshEnabled = !autoRefreshEnabled;
     localStorage.setItem('leasesAutoRefresh', autoRefreshEnabled ? 'on' : 'off');
-    refreshSecondsLeft = REFRESH_INTERVAL;
+    if (autoRefreshEnabled) { startStream(); } else { stopStream(); }
     updateAutoRefreshUI();
 }
 
-// Start the ticker
-refreshTimer = setInterval(tickAutoRefresh, 1000);
-// Initial paint
-document.addEventListener('DOMContentLoaded', updateAutoRefreshUI);
+// Fallback for browsers without EventSource: the old 30s reload.
+if (!window.EventSource) {
+    setInterval(() => {
+        const modalOpen = document.getElementById('reserve-modal').style.display === 'flex';
+        const searchHasText = document.getElementById('lease-search').value.trim().length > 0;
+        if (autoRefreshEnabled && !modalOpen && !searchHasText) location.reload();
+    }, 30000);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    if (autoRefreshEnabled) startStream();
+    updateAutoRefreshUI();
+});
 
 function expandAll(open) {
     document.querySelectorAll('details.lease-group').forEach(d => { d.open = open; });
@@ -287,30 +258,31 @@ function openReserveModal(ip, mac, hostname, vendor, circuitId, opt82) {
     document.getElementById('reserve-modal').style.display = 'flex';
     // Focus the hostname so users can fill it in immediately if missing.
     setTimeout(() => document.getElementById('rsv-hostname').focus(), 50);
-    // Pause auto-refresh while the modal is open.
-    autoRefreshEnabled = false;
-    updateAutoRefreshUI();
+    // Live updates arriving while the modal is open are buffered and
+    // applied on close (see startStream), so no need to pause anything.
 }
 
-// Wire up Reserve buttons via data-* attributes -- avoids inline-onclick
-// quoting headaches when MAC/hostname contain special characters.
+// Reserve/Delete buttons via event delegation on the container: the rows
+// are swapped out by live updates, so per-button listeners would be lost.
+// data-* attributes avoid inline-onclick quoting headaches.
 document.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll('button.reserve-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
+    document.getElementById('lease-groups').addEventListener('click', (e) => {
+        const rbtn = e.target.closest('button.reserve-btn');
+        if (rbtn) {
             openReserveModal(
-                btn.dataset.ip,
-                btn.dataset.mac,
-                btn.dataset.hostname,
-                btn.dataset.vendor,
-                btn.dataset.circuitId,
-                btn.dataset.opt82 === '1'
+                rbtn.dataset.ip,
+                rbtn.dataset.mac,
+                rbtn.dataset.hostname,
+                rbtn.dataset.vendor,
+                rbtn.dataset.circuitId,
+                rbtn.dataset.opt82 === '1'
             );
-        });
-    });
-    document.querySelectorAll('button.delete-lease-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const ip = btn.dataset.ip;
-            const host = btn.dataset.hostname;
+            return;
+        }
+        const dbtn = e.target.closest('button.delete-lease-btn');
+        if (dbtn) {
+            const ip = dbtn.dataset.ip;
+            const host = dbtn.dataset.hostname;
             const label = (host && host !== 'Unknown') ? ip + ' (' + host + ')' : ip;
             if (!confirm('Delete lease ' + label + '?\n\n' +
                          'The client keeps its IP until renewal, then requests a new lease.')) {
@@ -326,16 +298,16 @@ document.addEventListener('DOMContentLoaded', () => {
             form.appendChild(input);
             document.body.appendChild(form);
             form.submit();
-        });
+        }
     });
 });
 
 function closeReserveModal() {
     document.getElementById('reserve-modal').style.display = 'none';
-    // Restore auto-refresh state from localStorage when closing.
-    autoRefreshEnabled = localStorage.getItem('leasesAutoRefresh') !== 'off';
-    refreshSecondsLeft = REFRESH_INTERVAL;
-    updateAutoRefreshUI();
+    if (pendingUpdate) {
+        applyUpdate(pendingUpdate);
+        pendingUpdate = null;
+    }
 }
 
 // ESC to close the modal
@@ -348,10 +320,6 @@ document.addEventListener('keydown', (e) => {
 
 function filterLeases() {
     const q = document.getElementById('lease-search').value.trim().toLowerCase();
-    // Reset countdown when user starts typing, so the page doesn't reload
-    // a second after they finally typed their full query.
-    refreshSecondsLeft = REFRESH_INTERVAL;
-    updateAutoRefreshUI();
     let visibleRows = 0;
     let visibleGroups = 0;
 
@@ -388,7 +356,7 @@ function filterLeases() {
             ' in ' + visibleGroups + ' subnet' + (visibleGroups === 1 ? '' : 's') +
             ' &mdash; <a href="#" onclick="clearSearch(); return false;">clear</a>';
     } else {
-        summary.innerHTML = '<strong>Total Active Leases:</strong> {{ total }}';
+        summary.innerHTML = '<strong>Total Active Leases:</strong> ' + leaseTotal;
     }
 }
 

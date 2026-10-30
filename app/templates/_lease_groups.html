@@ -1,0 +1,86 @@
+{# Lease groups partial -- rendered by the leases page and pushed over
+   /leases/stream (SSE), so keep it self-contained: only `groups`. #}
+{% if groups %}
+    {% for group in groups %}
+    <details class="lease-group" data-group-name="{{ group.name|lower }}" data-group-cidr="{{ group.cidr }}" {% if group.leases %}open{% endif %}>
+        <summary>
+            <span>{{ group.name }}</span>
+            {% if group.cidr %}<span style="color: var(--text-faint); font-weight: normal;">{{ group.cidr }}</span>{% endif %}
+            {% if group.pool %}<span style="color: var(--text-faint); font-weight: normal; font-size: 0.85em;" title="DHCP pool">Pool: {{ group.pool }}</span>{% endif %}
+            {% if group.opt82 %}<span class="badge" style="font-size: 0.68rem;" title="Option-82 mode: leases record the switch port (circuit-id) and reservations default to it">Opt 82</span>{% endif %}
+            <span class="badge badge-accent" style="margin-left: auto;">{{ group.leases|length }} lease{{ '' if group.leases|length == 1 else 's' }}</span>
+        </summary>
+        <div style="padding: 0 1rem 1rem 1rem;">
+            {% if group.leases %}
+            {% set show_cid = group.opt82 or (group.leases | selectattr('circuit_id') | list) %}
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>IP Address</th>
+                            <th>MAC Address</th>
+                            {% if show_cid %}<th title="Relay circuit-id (DHCP option 82) -- the switch port behind this lease">Port (Opt 82)</th>{% endif %}
+                            <th>Vendor</th>
+                            <th>Hostname</th>
+                            <th>Subnet ID</th>
+                            <th>Lifetime (sec)</th>
+                            <th>Expires</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for lease in group.leases %}
+                        <tr class="lease-row">
+                            <td><strong>{{ lease.ip }}</strong></td>
+                            <td>{{ lease.mac }}</td>
+                            {% if show_cid %}<td>{{ lease.circuit_id or '-' }}</td>{% endif %}
+                            <td>{{ lease.vendor if lease.vendor else '-' }}</td>
+                            <td>{{ lease.hostname }}</td>
+                            <td>{{ lease.subnet_id }}</td>
+                            <td>{{ lease.lifetime }}</td>
+                            <td>{{ lease.expire }}</td>
+                            <td>
+                                {% if lease.reserved %}
+                                <span class="badge" title="A static reservation already exists for this MAC or IP"
+                                      style="font-size: 0.75rem;">Reserved</span>
+                                {% else %}
+                                <button type="button" class="btn btn-secondary reserve-btn"
+                                        style="padding: 0.2rem 0.55rem; font-size: 0.8rem;"
+                                        data-ip="{{ lease.ip }}"
+                                        data-mac="{{ lease.mac }}"
+                                        data-hostname="{{ lease.hostname }}"
+                                        data-vendor="{{ lease.vendor }}"
+                                        data-circuit-id="{{ lease.circuit_id or '' }}"
+                                        data-opt82="{{ '1' if group.opt82 else '' }}">
+                                    Reserve
+                                </button>
+                                {% endif %}
+                                <button type="button" class="btn btn-danger delete-lease-btn"
+                                        style="padding: 0.2rem 0.55rem; font-size: 0.8rem;"
+                                        data-ip="{{ lease.ip }}"
+                                        data-hostname="{{ lease.hostname }}">
+                                    Delete
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p style="color: var(--text-muted); padding: 0.25rem 0;">No leases in this subnet.</p>
+            {% endif %}
+        </div>
+    </details>
+    {% endfor %}
+{% else %}
+    <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
+        <h4 style="margin-bottom: 0.5rem;">No Active Leases Found</h4>
+        <p>This could mean:</p>
+        <ul style="text-align: left; display: inline-block; margin-top: 0.75rem;">
+            <li>No devices have requested DHCP leases yet</li>
+            <li>Lease file is not accessible or empty</li>
+            <li>DHCP server is not running or configured</li>
+        </ul>
+    </div>
+{% endif %}

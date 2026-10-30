@@ -6,13 +6,19 @@ A web-based management interface for ISC KEA DHCP4 server, packaged as a lightwe
 
 - **Live Lease View** (start page): leases read straight from the running
   server via the KEA control socket — grouped per subnet with pool ranges,
-  search, vendor lookup (offline IEEE OUI database), auto-refresh, and a
-  status bar with real server state, uptime and quick actions
+  search, vendor lookup (offline IEEE OUI database), and a status bar with
+  real server state, uptime and quick actions; updates are pushed to the
+  browser via server-sent events (HTML5 `EventSource`), so changes appear
+  within seconds without page reloads — search text, scroll position and
+  collapsed groups survive every update
 - **Lease Actions**: delete single leases or turn them into static
   reservations directly from the lease table (no service restart needed);
   already-reserved leases are flagged
 - **Subnet Management**: add, edit and delete subnets — pools, relay
-  (`giaddr`), gateway, DNS, domain — reservations and ids survive edits
+  (`giaddr`), gateway, DNS, domain — reservations and ids survive edits;
+  a count field creates several consecutive subnets in one go
+  (10.1.1.0/24, 10.1.2.0/24, …) with pool/gateway/relay rebased into
+  each network and name/zone numbered
 - **Subnet Groups**: free-form groups (name + color, e.g. "Amber"/"Studio")
   assignable per subnet; bulk reservations can target a whole group with the
   host part re-based into each subnet

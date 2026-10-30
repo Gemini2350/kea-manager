@@ -247,6 +247,11 @@
                     </div>
 
                     <div class="form-group">
+                        <label for="count">Count (consecutive subnets):</label>
+                        <input type="number" id="count" name="count" value="1" min="1" max="64">
+                    </div>
+
+                    <div class="form-group">
                         <label for="group">Group:</label>
                         <select id="group" name="group">
                             <option value="">None</option>
@@ -307,6 +312,12 @@
                     A domain without a dot becomes a subdomain of the main domain
                     (e.g. <code>studio1</code>{% if main_domain(config) %} &rarr; <code>studio1.{{ main_domain(config) }}</code>{% endif %});
                     with a dot it is used as-is.
+                    A count above 1 creates that many consecutive subnets
+                    (<code>10.1.1.0/24</code>, <code>10.1.2.0/24</code>, ...) in one go:
+                    pool, gateway and relay keep their host part rebased into each
+                    network, and a trailing number in name/domain is incremented
+                    (<code>Insel 1</code> &rarr; <code>Insel 2</code>,
+                    <code>studio1</code> &rarr; <code>studio2</code>).
                 </p>
 
                 <div style="text-align: center;">

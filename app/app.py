@@ -13,7 +13,7 @@ import time
 import io
 from datetime import datetime
 from flask import (Flask, render_template, request, redirect, url_for, flash,
-                   session, jsonify, send_file)
+                   session, jsonify, send_file, Response, stream_with_context)
 import subprocess
 import signal
 
@@ -981,9 +981,38 @@ def update_settings():
 
     return redirect(url_for('settings'))
 
+def _bump_label(text, step):
+    """Number a label for the i-th consecutive subnet: a trailing number
+    is incremented ('Amber Insel 6' -> 'Amber Insel 7', 'studio1' ->
+    'studio2'), anything else gets the ordinal appended."""
+    if not text or step == 0:
+        return text
+    m = re.search(r'(\d+)$', text)
+    if m:
+        return text[:m.start(1)] + str(int(m.group(1)) + step)
+    return f'{text} {step + 1}'.strip()
+
+
+def _rebase_ip(ip_str, base_net, target_net):
+    """Move an IP's host offset from base_net into target_net; addresses
+    outside base_net (e.g. a central DNS) are returned unchanged."""
+    try:
+        off = int(ipaddress.ip_address(ip_str)) - int(base_net.network_address)
+    except ValueError:
+        return ip_str
+    if 0 <= off < base_net.num_addresses:
+        return str(target_net.network_address + off)
+    return ip_str
+
+
 @app.route('/add-subnet', methods=['POST'])
 def add_subnet():
-    """Add new subnet"""
+    """Add one subnet -- or, with count > 1, that many consecutive ones.
+
+    For the consecutive subnets the network is advanced by its own size
+    (10.1.1.0/24 -> 10.1.2.0/24 ...), pool/gateway/relay keep their host
+    offsets rebased into each network, and name/zone are numbered
+    (trailing number incremented). Matches the per-island layout."""
     try:
         config = load_config()
         if not config or "Dhcp4" not in config:
@@ -1003,66 +1032,102 @@ def add_subnet():
         else:
             subnet = raw_subnet.strip() if raw_subnet else None
 
-        subnet_data = {
-            "id": next_id,
-            "subnet": subnet,  # always valid CIDR now
-            "pools": [{
-                "pool": f"{request.form.get('pool_start')}-{request.form.get('pool_end')}"
-            }],
-            "option-data": []
-        }
+        try:
+            count = max(1, min(64, int(request.form.get('count') or 1)))
+        except ValueError:
+            count = 1
+        base_net = ipaddress.ip_network(subnet, strict=False)
+        existing_nets = {s.get('subnet') for s in config["Dhcp4"]["subnet4"]}
 
-        # Optional friendly name (stored in user-context, shown across the UI)
         name = (request.form.get('name') or '').strip()
-        if name:
-            subnet_data["user-context"] = {"name": name}
-
-        # Optional group assignment, also kept in user-context
         group = (request.form.get('group') or '').strip()
-        if group and group in {g['name'] for g in get_groups()}:
-            subnet_data.setdefault("user-context", {})["group"] = group
+        if group not in {g['name'] for g in get_groups()}:
+            group = ''
+        opt82 = request.form.get('opt82_mode') == 'on'
+        relay_ips = [r.strip() for r in
+                     (request.form.get('relay') or '').split(',') if r.strip()]
+        gateway = (request.form.get('gateway') or '').strip()
+        dns_servers = (request.form.get('dns_servers') or '').strip()
+        pool_start = (request.form.get('pool_start') or '').strip()
+        pool_end = (request.form.get('pool_end') or '').strip()
+        raw_domain = (request.form.get('domain_name') or '').strip()
 
-        # Option-82 mode: IPs in this subnet are pinned to switch ports.
-        if request.form.get('opt82_mode') == 'on':
-            _apply_opt82_mode(config, subnet_data, True)
+        added, skipped = [], []
+        for i in range(count):
+            net_i = ipaddress.ip_network(
+                (int(base_net.network_address) + i * base_net.num_addresses,
+                 base_net.prefixlen))
+            if str(net_i) in existing_nets:
+                skipped.append(f'{net_i} [exists]')
+                continue
 
-        # Relay IP(s) -- essential in relayed setups so KEA matches DHCP
-        # requests (by giaddr) to this subnet. Accepts comma-separated list.
-        relay_raw = (request.form.get('relay') or '').strip()
-        if relay_raw:
-            relay_ips = [r.strip() for r in relay_raw.split(',') if r.strip()]
+            subnet_data = {
+                "id": next_id + len(added),
+                "subnet": str(net_i),
+                "pools": [{
+                    "pool": f"{_rebase_ip(pool_start, base_net, net_i)}-"
+                            f"{_rebase_ip(pool_end, base_net, net_i)}"
+                }],
+                "option-data": []
+            }
+
+            # Optional friendly name (stored in user-context, shown across the UI)
+            if name:
+                subnet_data["user-context"] = {"name": _bump_label(name, i)}
+
+            # Optional group assignment, also kept in user-context
+            if group:
+                subnet_data.setdefault("user-context", {})["group"] = group
+
+            # Option-82 mode: IPs in this subnet are pinned to switch ports.
+            if opt82:
+                _apply_opt82_mode(config, subnet_data, True)
+
+            # Relay IP(s) -- essential in relayed setups so KEA matches DHCP
+            # requests (by giaddr) to this subnet.
             if relay_ips:
-                subnet_data["relay"] = {"ip-addresses": relay_ips}
+                subnet_data["relay"] = {"ip-addresses": [
+                    _rebase_ip(r, base_net, net_i) for r in relay_ips]}
 
-        # Add gateway if provided
-        if request.form.get('gateway'):
-            subnet_data["option-data"].append({
-                "name": "routers",
-                "data": request.form.get('gateway')
-            })
+            if gateway:
+                subnet_data["option-data"].append({
+                    "name": "routers",
+                    "data": _rebase_ip(gateway, base_net, net_i)
+                })
 
-        # Add DNS if provided
-        if request.form.get('dns_servers'):
-            subnet_data["option-data"].append({
-                "name": "domain-name-servers",
-                "data": request.form.get('dns_servers')
-            })
+            # DNS servers are central, not per island: keep them as-is.
+            if dns_servers:
+                subnet_data["option-data"].append({
+                    "name": "domain-name-servers",
+                    "data": dns_servers
+                })
 
-        # Domain: a value without a dot becomes a subdomain of the main
-        # domain (zone 'studio1' -> studio1.<main>); DDNS registers hosts
-        # under the zone domain via the qualifying suffix.
-        domain = _resolve_zone_domain(request.form.get('domain_name'),
-                                      main_domain(config))
-        if domain:
-            subnet_data["option-data"].append({"name": "domain-name", "data": domain})
-            subnet_data["option-data"].append({"name": "domain-search", "data": domain})
-            subnet_data["ddns-qualifying-suffix"] = domain
+            # Domain: a value without a dot becomes a subdomain of the main
+            # domain (zone 'studio1' -> studio1.<main>); DDNS registers hosts
+            # under the zone domain via the qualifying suffix. For multiple
+            # subnets the zone label is numbered too (studio1, studio2, ...).
+            if raw_domain:
+                head, sep, tail = raw_domain.partition('.')
+                domain = _resolve_zone_domain(_bump_label(head, i) + sep + tail,
+                                              main_domain(config))
+                if domain:
+                    subnet_data["option-data"].append({"name": "domain-name", "data": domain})
+                    subnet_data["option-data"].append({"name": "domain-search", "data": domain})
+                    subnet_data["ddns-qualifying-suffix"] = domain
 
-        config["Dhcp4"]["subnet4"].append(subnet_data)
+            config["Dhcp4"]["subnet4"].append(subnet_data)
+            added.append(str(net_i))
 
-        if validate_config(config):
+        if not added:
+            flash('No subnets added. ' +
+                  ('Skipped: ' + ', '.join(skipped) if skipped else ''))
+        elif validate_config(config):
             save_config(config)
-            flash('Subnet added successfully!')
+            msg = ('Subnet added successfully!' if len(added) == 1
+                   else f'{len(added)} subnets added: ' + ', '.join(added))
+            if skipped:
+                msg += '. Skipped: ' + ', '.join(skipped)
+            flash(msg)
         else:
             flash('Invalid subnet configuration!')
 
@@ -2047,6 +2112,45 @@ def leases():
                                subnet_groups=get_groups(),
                                status=status, uptime=uptime,
                                config_file=CONFIG_FILE, error=str(e))
+
+
+@app.route('/leases/stream')
+def leases_stream():
+    """Server-sent events: push the lease view to the browser on change.
+
+    Replaces the old 30s full-page reload. Each cycle renders the same
+    partial the page uses; a push only goes out when leases, totals or
+    the server state actually changed (uptime is excluded from the hash,
+    it ticks every cycle). Comment lines keep the connection alive and
+    stop proxies from buffering. EventSource reconnects on its own."""
+    interval = max(2, int(os.environ.get('KEA_SSE_INTERVAL', '5')))
+
+    @stream_with_context
+    def gen():
+        last = None
+        while True:
+            try:
+                status, uptime = _server_status()
+                active = parse_lease_file()
+                groups = group_leases_by_subnet(active, load_config())
+                html = render_template('_lease_groups.html', groups=groups)
+                digest = hashlib.sha1(
+                    f'{status}|{len(active)}|{html}'.encode()).hexdigest()
+                if digest != last:
+                    last = digest
+                    payload = json.dumps({'html': html, 'total': len(active),
+                                          'status': status, 'uptime': uptime})
+                    yield f'event: leases\ndata: {payload}\n\n'
+                else:
+                    yield ': keepalive\n\n'
+            except Exception as e:
+                print(f'leases_stream: {e}')
+                yield ': error\n\n'
+            time.sleep(interval)
+
+    return Response(gen(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache',
+                             'X-Accel-Buffering': 'no'})
 
 
 @app.route('/delete-lease', methods=['POST'])
