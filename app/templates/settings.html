@@ -28,6 +28,13 @@
                        placeholder="example.lan">
             </div>
 
+            <div class="form-group">
+                <label for="g-dns">Main DNS Servers (comma-separated): {{ help("Handed out to every subnet that has no DNS entry of its own; a subnet's DNS overrides it.") }}</label>
+                <input type="text" id="g-dns" name="dns_servers"
+                       value="{{ main_dns(config) }}"
+                       placeholder="8.8.8.8, 8.8.4.4">
+            </div>
+
             <div class="grid">
                 <div class="form-group">
                     <label for="renew_timer">Renew Timer (seconds):</label>
@@ -197,9 +204,20 @@
 
     <!-- Subnet Management -->
     <div class="card" style="margin-bottom: 2rem;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; gap: 0.5rem; flex-wrap: wrap;">
             <h3 style="color: var(--text);">Subnets</h3>
-            <button class="btn" onclick="toggleAddSubnet()">Add New Subnet</button>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <!-- Bulk delete: the per-card checkboxes reference this form
+                     via form="bulk-delete-form" (cards hold forms of their
+                     own, so they cannot be nested inside it). -->
+                <form id="bulk-delete-form" method="POST" action="{{ url_for('delete_subnets') }}"
+                      onsubmit="return confirmBulkDelete(this)" style="display: inline;">
+                    <button type="submit" id="bulk-delete-btn" class="btn btn-danger" style="display: none;">
+                        Delete Selected (<span id="bulk-delete-count">0</span>)
+                    </button>
+                </form>
+                <button class="btn" onclick="toggleAddSubnet()">Add New Subnet</button>
+            </div>
         </div>
 
         <!-- Add Subnet Form (Hidden by default) -->
@@ -298,12 +316,17 @@
             {# /30 and /31 point-to-point nets hold a single DHCP address --
                render them as one slim row instead of a full card. #}
             {% set p2p = (subnet.subnet.split('/') | last | int(0)) in (30, 31) %}
-            <div class="card" style="margin-bottom: {{ '0.5rem' if p2p else '1rem' }}; border-left: 3px solid var(--accent);{{ ' padding: 0.55rem 1.25rem;' if p2p }}">
+            {% set subnet_name = subnet.get('user-context', {}).get('name') %}
+            {% set sgroup = subnet_group(subnet) %}
+            {% set gcolor = group_color(sgroup, groups) if sgroup else '' %}
+            <div class="card" style="margin-bottom: {{ '0.5rem' if p2p else '1rem' }}; border-left: 3px solid {{ gcolor or 'var(--accent)' }};{{ ' padding: 0.55rem 1.25rem;' if p2p }}">
                 <div style="display: flex; justify-content: space-between; align-items: {{ 'center' if p2p else 'flex-start' }}; gap: 0.75rem; flex-wrap: wrap;{{ '' if p2p else ' margin-bottom: 1rem;' }}">
-                    <div{% if p2p %} style="display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; min-width: 0;"{% endif %}>
-                        {% set subnet_name = subnet.get('user-context', {}).get('name') %}
-                        {% set sgroup = subnet_group(subnet) %}
-                        {% set gcolor = group_color(sgroup, groups) if sgroup else '' %}
+                    <div style="display: flex; align-items: {{ 'center' if p2p else 'flex-start' }}; gap: 0.75rem; min-width: 0;">
+                        <input type="checkbox" name="subnet_sel" value="{{ loop.index0 }}"
+                               form="bulk-delete-form" onchange="updateBulkDelete()"
+                               title="Select for bulk delete"
+                               style="width: auto; margin: 0; align-self: center; accent-color: var(--danger, #dc3545); flex-shrink: 0;">
+                        <div{% if p2p %} style="display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; min-width: 0;"{% endif %}>
                         <h4 style="margin-bottom: {{ '0' if p2p else '0.4rem' }};{{ ' font-size: 0.95rem;' if p2p }}">
                             {% if subnet_name %}{{ subnet_name }}{% else %}Subnet {{ subnet.id }}{% endif %}
                             {% if sgroup %}
@@ -330,6 +353,7 @@
                                 {% endfor %}
                             {% endif %}
                         {% endif %}
+                        </div>
                     </div>
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
                         <form method="POST" action="{{ url_for('set_subnet_group', subnet_index=loop.index0) }}" style="display: inline;">
@@ -548,6 +572,19 @@ function toggleSecret() {
 function toggleAddSubnet() {
     const form = document.getElementById('add-subnet-form');
     form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+// Bulk delete: button appears once at least one subnet is checked.
+function updateBulkDelete() {
+    const n = document.querySelectorAll('input[name=subnet_sel]:checked').length;
+    document.getElementById('bulk-delete-btn').style.display = n ? '' : 'none';
+    document.getElementById('bulk-delete-count').textContent = n;
+}
+
+function confirmBulkDelete() {
+    const n = document.querySelectorAll('input[name=subnet_sel]:checked').length;
+    return n > 0 && confirm('Delete ' + n + ' subnet' + (n > 1 ? 's' : '')
+        + '? Their reservations are removed too.');
 }
 
 // /30 and /31 point-to-point subnets: pool/gateway/relay are derived, so

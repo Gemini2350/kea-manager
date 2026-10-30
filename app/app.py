@@ -262,7 +262,15 @@ def main_domain(config):
     return _get_option(dhcp4.get('option-data'), 'domain-name')
 
 
+def main_dns(config):
+    """The global domain-name-servers -- KEA hands them to every subnet
+    that has no DNS entry of its own (option inheritance)."""
+    dhcp4 = (config or {}).get('Dhcp4', {})
+    return _get_option(dhcp4.get('option-data'), 'domain-name-servers')
+
+
 app.jinja_env.globals['main_domain'] = main_domain
+app.jinja_env.globals['main_dns'] = main_dns
 
 
 def _resolve_zone_domain(value, main):
@@ -888,6 +896,13 @@ def update_settings():
         new_main = (request.form.get('domain_name') or '').strip().strip('.')
         _set_option(gopts, 'domain-name', new_main)
         _set_option(gopts, 'domain-search', new_main)
+
+        # Main DNS: handed to every subnet without its own DNS entry
+        # (KEA option inheritance global -> subnet).
+        dns = ', '.join(p.strip() for p in
+                        (request.form.get('dns_servers') or '').split(',')
+                        if p.strip())
+        _set_option(gopts, 'domain-name-servers', dns)
         if not gopts:
             config["Dhcp4"].pop('option-data', None)
 
@@ -1171,6 +1186,30 @@ def delete_subnet(subnet_index):
 
     except Exception as e:
         flash(f'Error deleting subnet: {str(e)}')
+
+    return redirect(url_for('settings'))
+
+
+@app.route('/delete-subnets', methods=['POST'])
+def delete_subnets():
+    """Delete all selected subnets in one go (bulk checkboxes)."""
+    try:
+        config = load_config()
+        subnets = (config or {}).get('Dhcp4', {}).get('subnet4', [])
+        picked = sorted({int(i) for i in request.form.getlist('subnet_sel')
+                         if i.isdigit() and int(i) < len(subnets)},
+                        reverse=True)
+        # Descending removal keeps the remaining indexes valid.
+        removed = [subnets.pop(i).get('subnet', '?') for i in picked]
+        if not removed:
+            flash('No subnets selected.')
+        else:
+            save_config(config)
+            flash(('Subnet deleted: ' if len(removed) == 1
+                   else f'{len(removed)} subnets deleted: ')
+                  + ', '.join(reversed(removed)))
+    except Exception as e:
+        flash(f'Error deleting subnets: {str(e)}')
 
     return redirect(url_for('settings'))
 

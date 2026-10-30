@@ -16,6 +16,8 @@ A web-based management interface for ISC KEA DHCP4 server, packaged as a lightwe
   already-reserved leases are flagged
 - **Subnet Management**: add, edit and delete subnets — pools, relay
   (`giaddr`), gateway, DNS, domain — reservations and ids survive edits;
+  checkboxes allow deleting several subnets at once, and a global "Main
+  DNS Servers" setting serves every subnet without its own DNS entry;
   a count field creates several consecutive subnets in one go
   (10.1.1.0/24, 10.1.2.0/24, …) with pool/gateway/relay rebased into
   each network and name/zone numbered; /30 and /31 (RFC 3021)
