@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from '_macros.html' import help %}
 
 {% block title %}Settings - KEA DHCP Manager{% endblock %}
 
@@ -21,15 +22,10 @@
             </div>
 
             <div class="form-group">
-                <label for="g-domain">Main Domain:</label>
+                <label for="g-domain">Main Domain: {{ help("Handed out as domain and DNS search domain to every subnet without its own domain. Subnet subdomains (e.g. <code>studio1</code>) derive from it and move along when it changes.") }}</label>
                 <input type="text" id="g-domain" name="domain_name"
                        value="{{ main_domain(config) }}"
                        placeholder="example.lan">
-                <small style="color: var(--text-muted); display: block; margin-top: 0.25rem;">
-                    Handed out as domain and DNS search domain to every subnet without
-                    its own domain. Subnet subdomains (e.g. <code>studio1</code>)
-                    derive from it and move along when it changes.
-                </small>
             </div>
 
             <div class="grid">
@@ -59,16 +55,14 @@
                 <input type="checkbox" id="match_by_mac" name="match_by_mac" style="width: auto; margin: 0;"
                        {% if config.Dhcp4 and config.Dhcp4.get('match-client-id', True) == False %}checked{% endif %}>
                 <label for="match_by_mac" style="margin: 0; font-weight: 500;">Identify clients by MAC address only</label>
-                <small style="color: var(--text-muted);">&mdash; ignore DHCP client-ids; needed when clients are
-                    cloned VMs sharing a machine-id/DUID, which otherwise evict each other's leases</small>
+                {{ help("Ignores DHCP client-ids. Needed when clients are cloned VMs sharing a machine-id/DUID, which otherwise evict each other's leases.") }}
             </div>
 
             <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem;">
                 <input type="checkbox" id="single_lease_per_mac" name="single_lease_per_mac" style="width: auto; margin: 0;"
                        {% if single_lease_per_mac %}checked{% endif %}>
                 <label for="single_lease_per_mac" style="margin: 0; font-weight: 500;">Keep only the newest lease per MAC</label>
-                <small style="color: var(--text-muted);">&mdash; when a device moves to another subnet, its stale
-                    leases elsewhere (and their DNS records) are removed automatically within ~30s</small>
+                {{ help("When a device moves to another subnet, its stale leases elsewhere (and their DNS records) are removed automatically within ~30s.") }}
             </div>
 
             <div style="text-align: center;">
@@ -79,11 +73,7 @@
 
     <!-- DDNS Settings -->
     <div class="card" style="margin-bottom: 2rem;">
-        <h3 style="color: var(--text); margin-bottom: 1rem;">Dynamic DNS (DDNS)</h3>
-        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem;">
-            Forwards hostnames received via DHCP option 12 to an external DNS server
-            (e.g. BIND9 with allow-update + TSIG). Saving restarts both KEA daemons.
-        </p>
+        <h3 style="color: var(--text); margin-bottom: 1rem;">Dynamic DNS (DDNS) {{ help("Forwards hostnames received via DHCP option 12 to an external DNS server (e.g. BIND9 with allow-update + TSIG). Saving restarts both KEA daemons.") }}</h3>
         <form method="POST" action="{{ url_for('update_ddns') }}">
             <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem;">
                 <input type="checkbox" id="ddns_enabled" name="ddns_enabled"
@@ -110,17 +100,10 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="reverse_zone">Reverse Zone(s):</label>
+                    <label for="reverse_zone">Reverse Zone(s): {{ help("Needed for PTR records. Without a matching reverse zone the DDNS daemon discards the whole update &mdash; including the forward record. <code>10.in-addr.arpa</code> covers all of 10.0.0.0/8; comma-separate several zones. The DNS server must host the zone(s) and accept updates with the TSIG key.") }}</label>
                     <input type="text" id="reverse_zone" name="reverse_zone"
                            value="{{ ddns.reverse_zones }}"
                            placeholder="10.in-addr.arpa">
-                    <small style="color: var(--text-muted); display: block; margin-top: 0.25rem;">
-                        Needed for PTR records. Without a matching reverse zone the DDNS
-                        daemon discards the whole update &mdash; including the forward
-                        record. <code>10.in-addr.arpa</code> covers all of 10.0.0.0/8;
-                        comma-separate several zones. The DNS server must host the
-                        zone(s) and accept updates with the TSIG key.
-                    </small>
                 </div>
 
                 <div class="form-group">
@@ -131,18 +114,13 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="conflict_mode">Conflict Resolution:</label>
+                    <label for="conflict_mode">Conflict Resolution: {{ help("With the default, updates are rejected (RCODE 8) when the existing DNS record carries a different DHCID &mdash; e.g. after switching client identification. \"no-check-with-dhcid\" lets KEA replace such records.") }}</label>
                     <select id="conflict_mode" name="conflict_mode">
                         <option value="check-with-dhcid" {% if ddns.conflict_mode == 'check-with-dhcid' %}selected{% endif %}>check-with-dhcid (default, ownership check)</option>
                         <option value="no-check-with-dhcid" {% if ddns.conflict_mode == 'no-check-with-dhcid' %}selected{% endif %}>no-check-with-dhcid (overwrite stale records)</option>
                         <option value="check-exists-with-dhcid" {% if ddns.conflict_mode == 'check-exists-with-dhcid' %}selected{% endif %}>check-exists-with-dhcid</option>
                         <option value="no-check-without-dhcid" {% if ddns.conflict_mode == 'no-check-without-dhcid' %}selected{% endif %}>no-check-without-dhcid</option>
                     </select>
-                    <small style="color: var(--text-muted); display: block; margin-top: 0.25rem;">
-                        With the default, updates are rejected (RCODE 8) when the existing DNS
-                        record carries a different DHCID &mdash; e.g. after switching client
-                        identification. "no-check-with-dhcid" lets KEA replace such records.
-                    </small>
                 </div>
             </div>
 
@@ -188,12 +166,7 @@
 
     <!-- Subnet Groups -->
     <div class="card" style="margin-bottom: 2rem;">
-        <h3 style="color: var(--text); margin-bottom: 0.5rem;">Subnet Groups</h3>
-        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem;">
-            Groups tag subnets for bulk reservations ("apply to all &hellip; subnets")
-            and color their badges. Renaming or deleting a group updates the
-            assigned subnets automatically.
-        </p>
+        <h3 style="color: var(--text); margin-bottom: 1.25rem;">Subnet Groups {{ help("Groups tag subnets for bulk reservations (\"apply to all &hellip; subnets\") and color their badges. Renaming or deleting a group updates the assigned subnets automatically.") }}</h3>
         {% for g in groups %}
         <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; flex-wrap: wrap;">
             <form method="POST" action="{{ url_for('save_group') }}" style="display: flex; align-items: center; gap: 0.5rem;">
@@ -247,7 +220,7 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="count">Count (consecutive subnets):</label>
+                        <label for="count">Count (consecutive subnets): {{ help("A count above 1 creates that many consecutive subnets (<code>10.1.1.0/24</code>, <code>10.1.2.0/24</code>, ...) in one go: pool, gateway and relay keep their host part rebased into each network, and a trailing number in name/domain is incremented (<code>Insel 1</code> &rarr; <code>Insel 2</code>, <code>studio1</code> &rarr; <code>studio2</code>). Existing networks are skipped.") }}</label>
                         <input type="number" id="count" name="count" value="1" min="1" max="64">
                     </div>
 
@@ -262,7 +235,7 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="relay">Relay IP (giaddr):</label>
+                        <label for="relay">Relay IP (giaddr): {{ help("The address the DHCP relay inserts as <code>giaddr</code> (typically the router in the target subnet). Required when clients reach KEA through a relay rather than sitting on the same L2 segment.") }}</label>
                         <input type="text" id="relay" name="relay"
                                placeholder="192.168.1.2">
                     </div>
@@ -286,13 +259,13 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="dns_servers">DNS Servers (comma-separated):</label>
+                        <label for="dns_servers">DNS Servers (comma-separated): {{ help("Leave empty to inherit the global settings.") }}</label>
                         <input type="text" id="dns_servers" name="dns_servers"
                                placeholder="8.8.8.8, 8.8.4.4">
                     </div>
 
                     <div class="form-group">
-                        <label for="domain_name">Domain / Subdomain:</label>
+                        <label for="domain_name">Domain / Subdomain: {{ help("Leave empty to inherit the global settings. A value without a dot becomes a subdomain of the main domain" ~ (" (e.g. <code>studio1</code> &rarr; <code>studio1." ~ main_domain(config) ~ "</code>)" if main_domain(config) else "") ~ "; with a dot it is used as-is. Also handed out as DNS search domain and used as DDNS suffix.") }}</label>
                         <input type="text" id="domain_name" name="domain_name"
                                placeholder="studio1">
                     </div>
@@ -300,25 +273,8 @@
                 <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem;">
                     <input type="checkbox" id="add-opt82" name="opt82_mode" style="width: auto; margin: 0;">
                     <label for="add-opt82" style="margin: 0; font-weight: 500;">Option-82 mode (port-based IPs)</label>
-                    <small style="color: var(--text-muted);">
-                        &mdash; reservations default to the switch port (circuit-id) and leases record the port
-                    </small>
+                    {{ help("Reservations in this subnet default to the switch port (circuit-id) and leases record the port, so the leases page can show and reserve it.") }}
                 </div>
-                <p style="color: var(--text-muted); font-size: 0.82rem; margin-bottom: 1rem;">
-                    Relay IP is the address the DHCP relay inserts as <code>giaddr</code>
-                    (typically the router in the target subnet). Required when clients
-                    reach KEA through a relay rather than sitting on the same L2 segment.
-                    Leave DNS/Domain empty to inherit the global settings.
-                    A domain without a dot becomes a subdomain of the main domain
-                    (e.g. <code>studio1</code>{% if main_domain(config) %} &rarr; <code>studio1.{{ main_domain(config) }}</code>{% endif %});
-                    with a dot it is used as-is.
-                    A count above 1 creates that many consecutive subnets
-                    (<code>10.1.1.0/24</code>, <code>10.1.2.0/24</code>, ...) in one go:
-                    pool, gateway and relay keep their host part rebased into each
-                    network, and a trailing number in name/domain is incremented
-                    (<code>Insel 1</code> &rarr; <code>Insel 2</code>,
-                    <code>studio1</code> &rarr; <code>studio2</code>).
-                </p>
 
                 <div style="text-align: center;">
                     <button type="submit" class="btn btn-success">Add Subnet</button>
@@ -382,7 +338,7 @@
                 {% set pool0 = subnet.pools[0].pool if subnet.pools else '' %}
                 {% set pool_parts = pool0.split('-') %}
                 <div id="edit-subnet-{{ loop.index0 }}" style="display: none; margin-bottom: 1.5rem; padding: 1.25rem; background: var(--surface-2); border-radius: 12px;">
-                    <h5 style="margin-bottom: 1rem; color: var(--text);">Edit Subnet</h5>
+                    <h5 style="margin-bottom: 1rem; color: var(--text);">Edit Subnet {{ help("Reservations and the subnet id are kept. Leave DNS/Domain empty to inherit the global settings; the domain is also handed out as DNS search domain and used as DDNS suffix. A domain without a dot becomes a subdomain of the main domain" ~ (" (e.g. <code>studio1</code> &rarr; <code>studio1." ~ main_domain(config) ~ "</code>)" if main_domain(config) else "") ~ ". Saving restarts the DHCP service.") }}</h5>
                     <form method="POST" action="{{ url_for('edit_subnet', subnet_index=loop.index0) }}">
                         <div class="grid">
                             <div class="form-group">
@@ -427,18 +383,8 @@
                             <input type="checkbox" id="opt82-{{ loop.index0 }}" name="opt82_mode"
                                    style="width: auto; margin: 0;" {% if subnet_opt82(subnet) %}checked{% endif %}>
                             <label for="opt82-{{ loop.index0 }}" style="margin: 0; font-weight: 500;">Option-82 mode (port-based IPs)</label>
-                            <small style="color: var(--text-muted);">
-                                &mdash; reservations default to the switch port (circuit-id) and leases record the port
-                            </small>
+                            {{ help("Reservations in this subnet default to the switch port (circuit-id) and leases record the port, so the leases page can show and reserve it.") }}
                         </div>
-                        <p style="color: var(--text-muted); font-size: 0.82rem; margin-bottom: 1rem;">
-                            Reservations and the subnet id are kept. Leave DNS/Domain empty to
-                            inherit the global settings; the domain is also handed out as DNS
-                            search domain and used as DDNS suffix. A domain without a dot
-                            becomes a subdomain of the main domain
-                            (e.g. <code>studio1</code>{% if main_domain(config) %} &rarr; <code>studio1.{{ main_domain(config) }}</code>{% endif %}).
-                            Saving restarts the DHCP service.
-                        </p>
                         <div style="text-align: center;">
                             <button type="submit" class="btn btn-success">Save Changes</button>
                             <button type="button" class="btn" onclick="toggleEditSubnet({{ loop.index0 }})">Cancel</button>
@@ -464,15 +410,11 @@
                             <input type="hidden" name="subnet_index" value="{{ loop.index0 }}">
                             <div class="grid">
                                 <div class="form-group">
-                                    <label>Identify by:</label>
+                                    <label>Identify by: {{ help("Circuit-ID pins the IP to the relay/switch port that inserts option 82 &mdash; whatever device is plugged in.") }}</label>
                                     <select name="id_type">
                                         <option value="mac" {% if not subnet_opt82(subnet) %}selected{% endif %}>MAC address</option>
                                         <option value="circuit-id" {% if subnet_opt82(subnet) %}selected{% endif %}>Circuit-ID (DHCP Option 82)</option>
                                     </select>
-                                    <small style="color: var(--text-muted); display: block; margin-top: 0.25rem;">
-                                        Circuit-ID pins the IP to the relay/switch port that inserts
-                                        option 82 &mdash; whatever device is plugged in.
-                                    </small>
                                 </div>
                                 <div class="form-group">
                                     <label>MAC / Circuit-ID:</label>
@@ -491,16 +433,13 @@
                                 </div>
                             </div>
                             <div class="form-group" style="margin-top: 0.5rem;">
-                                <label for="apply-scope-{{ loop.index0 }}">Apply to:</label>
+                                <label for="apply-scope-{{ loop.index0 }}">Apply to: {{ help("For a whole group, the host part of the IP (e.g. .81) is kept and rebased into each subnet's range.") }}</label>
                                 <select id="apply-scope-{{ loop.index0 }}" name="apply_scope">
                                     <option value="single">This subnet only</option>
                                     {% for g in groups %}
                                     <option value="{{ g.name }}">All {{ g.name }} subnets</option>
                                     {% endfor %}
                                 </select>
-                                <small style="color: var(--text-muted); display: block; margin-top: 0.25rem;">
-                                    For Amber/Blue, the host part (e.g. .81) is kept and rebased into each subnet's range.
-                                </small>
                             </div>
                             <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem;">
                                 <input type="checkbox" id="override-{{ loop.index0 }}" name="override"
@@ -508,9 +447,7 @@
                                 <label for="override-{{ loop.index0 }}" style="margin: 0; font-weight: 500;">
                                     Override existing reservation
                                 </label>
-                                <small style="color: var(--text-muted);">
-                                    &mdash; replace if this MAC/IP is already reserved
-                                </small>
+                                {{ help("Replace the existing reservation if this identifier or IP is already reserved.") }}
                             </div>
                             <div style="text-align: center; margin-top: 1rem;">
                                 <button type="submit" class="btn btn-success">Add Reservation</button>

@@ -372,11 +372,13 @@
             border: 1px solid var(--border);
             border-radius: var(--radius-lg);
             margin-bottom: 0.75rem;
-            overflow: hidden;
+            /* no overflow:hidden -- it would clip the help tooltips; the
+               summary carries its own radius so hover stays rounded */
         }
 
         details.lease-group > summary {
             list-style: none;
+            border-radius: var(--radius-lg);
             padding: 0.85rem 1rem;
             cursor: pointer;
             font-weight: 600;
@@ -401,9 +403,69 @@
             flex-shrink: 0;
         }
 
+        details.lease-group[open] > summary { border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+
         details.lease-group[open] > summary::before { transform: rotate(90deg); }
 
         details.lease-group > summary:hover { background: var(--surface-2); }
+
+        /* "?" help icon with hover/focus tooltip (replaces inline hint texts) */
+        .help-tip {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1.05rem;
+            height: 1.05rem;
+            margin-left: 0.35rem;
+            border-radius: 50%;
+            background: var(--surface-2);
+            border: 1px solid var(--border-strong);
+            color: var(--text-muted);
+            font-size: 0.7rem;
+            font-weight: 600;
+            line-height: 1;
+            cursor: help;
+            vertical-align: middle;
+            user-select: none;
+            flex-shrink: 0;
+        }
+
+        .help-tip:hover,
+        .help-tip:focus {
+            color: var(--accent);
+            border-color: var(--accent);
+            outline: none;
+        }
+
+        .help-tip .help-tip-text {
+            display: none;
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
+            width: 340px;
+            max-width: 80vw;
+            padding: 0.6rem 0.8rem;
+            background: var(--surface);
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow), 0 8px 24px rgba(0, 0, 0, 0.12);
+            color: var(--text-muted);
+            font-size: 0.82rem;
+            font-weight: 400;
+            line-height: 1.45;
+            text-align: left;
+            text-transform: none;
+            letter-spacing: normal;
+            white-space: normal;
+            z-index: 60;
+        }
+
+        .help-tip:hover .help-tip-text,
+        .help-tip:focus .help-tip-text {
+            display: block;
+        }
 
         @media (max-width: 720px) {
             .nav-links { gap: 0; flex-wrap: wrap; }
@@ -440,5 +502,34 @@
 
         {% block content %}{% endblock %}
     </div>
+
+    <script>
+    // Keep help tooltips inside the viewport: when one opens near an
+    // edge, shift it horizontally so it never gets clipped.
+    (function () {
+        function clampTip(tip) {
+            const txt = tip.querySelector('.help-tip-text');
+            if (!txt) return;
+            txt.style.transform = 'translateX(-50%)';   // reset to centered
+            const r = txt.getBoundingClientRect();
+            if (!r.width) return;                       // not visible
+            let dx = 0;
+            if (r.left < 8) {
+                dx = 8 - r.left;
+            } else if (r.right > window.innerWidth - 8) {
+                dx = (window.innerWidth - 8) - r.right;
+            }
+            if (dx) txt.style.transform = 'translateX(calc(-50% + ' + dx + 'px))';
+        }
+        document.addEventListener('mouseover', (e) => {
+            const tip = e.target.closest && e.target.closest('.help-tip');
+            if (tip) clampTip(tip);
+        });
+        document.addEventListener('focusin', (e) => {
+            const tip = e.target.closest && e.target.closest('.help-tip');
+            if (tip) clampTip(tip);
+        });
+    })();
+    </script>
 </body>
 </html>

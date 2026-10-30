@@ -1,0 +1,6 @@
+{# Shared UI helpers. help(text): a "?" icon that shows the given hint
+   as a tooltip on hover/focus -- keeps forms compact. The text may
+   contain markup (<code>...</code>), so only pass literals. #}
+{% macro help(text) -%}
+<span class="help-tip" tabindex="0">?<span class="help-tip-text">{{ text|safe }}</span></span>
+{%- endmacro %}
