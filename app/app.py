@@ -1947,6 +1947,13 @@ def _single_lease_per_mac_enabled():
     return bool((load_manager_settings() or {}).get('single-lease-per-mac'))
 
 
+def _lease_fqdn(lease):
+    """The FQDN a lease was registered under, normalized for comparison;
+    '' when the lease has none (or only the parser's placeholder)."""
+    h = (lease.get('hostname') or '').strip().rstrip('.').lower()
+    return '' if h == 'unknown' else h
+
+
 def _cleanup_duplicate_leases():
     """Keep only the newest lease per MAC across subnets.
 
@@ -1954,7 +1961,14 @@ def _cleanup_duplicate_leases():
     re-plugged between islands), its old lease would linger until expiry
     -- together with its DNS records. This removes the older leases via
     lease4-del with update-ddns, so KEA also queues the DNS removal
-    (A + PTR) for them."""
+    (A + PTR) for them.
+
+    When both subnets hand out the same FQDN (same domain, hostname from
+    a group reservation), that queued removal can strip the forward
+    record the new lease just registered -- with conflict resolution
+    disabled D2 deletes the whole A RRset, not just the old address. So
+    after the removal the add is queued again via lease4-resend-ddns;
+    D2 processes NCRs in order, leaving the new record as final state."""
     leases = _leases_from_socket()
     if not leases:
         return
@@ -1969,12 +1983,21 @@ def _cleanup_duplicate_leases():
             continue  # duplicates within one subnet are KEA's business
         entries.sort(key=lambda l: _as_float(l.get('expire')))
         newest = entries[-1]
+        same_fqdn = False
         for stale in entries[:-1]:
             resp = kea_ctrl_command('lease4-del', {'ip-address': stale['ip'],
                                                    'update-ddns': True})
             print(f"single-lease-per-mac: removed stale lease {stale['ip']} "
                   f"(subnet {stale.get('subnet_id')}) for MAC {mac}, now in "
                   f"subnet {newest.get('subnet_id')} ({newest['ip']}); "
+                  f"result={resp.get('result')}")
+            if _lease_fqdn(stale) and _lease_fqdn(stale) == _lease_fqdn(newest):
+                same_fqdn = True
+        if same_fqdn:
+            resp = kea_ctrl_command('lease4-resend-ddns',
+                                    {'ip-address': newest['ip']})
+            print(f"single-lease-per-mac: re-queued DDNS add for "
+                  f"{newest['ip']} after same-name removal; "
                   f"result={resp.get('result')}")
 
 
