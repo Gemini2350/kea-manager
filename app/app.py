@@ -777,6 +777,12 @@ def update_ddns():
         if 'Dhcp4' not in dhcp4:
             dhcp4['Dhcp4'] = {}
         dhcp4['Dhcp4']['ddns-send-updates'] = enabled
+        # The server owns all DNS records: ignore the FQDN option flags
+        # with which clients claim the forward update for themselves
+        # (Windows does by default -- but cannot update a TSIG-protected
+        # zone, leaving the name without an A record) or decline updates.
+        dhcp4['Dhcp4']['ddns-override-client-update'] = enabled
+        dhcp4['Dhcp4']['ddns-override-no-update'] = enabled
         if qualifying_suffix:
             dhcp4['Dhcp4']['ddns-qualifying-suffix'] = qualifying_suffix
 

@@ -80,7 +80,7 @@
 
     <!-- DDNS Settings -->
     <div class="card" style="margin-bottom: 2rem;">
-        <h3 style="color: var(--text); margin-bottom: 1rem;">Dynamic DNS (DDNS) {{ help("Forwards hostnames received via DHCP option 12 to an external DNS server (e.g. BIND9 with allow-update + TSIG). Saving restarts both KEA daemons.") }}</h3>
+        <h3 style="color: var(--text); margin-bottom: 1rem;">Dynamic DNS (DDNS) {{ help("Forwards hostnames received via DHCP option 12 or 81 to an external DNS server (e.g. BIND9 with allow-update + TSIG). The server performs all updates itself, overriding clients (e.g. Windows) that would claim the forward record for themselves. Saving restarts both KEA daemons.") }}</h3>
         <form method="POST" action="{{ url_for('update_ddns') }}">
             <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem;">
                 <input type="checkbox" id="ddns_enabled" name="ddns_enabled"
