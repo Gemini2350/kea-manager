@@ -87,9 +87,19 @@ DEV_MODE = (os.environ.get('KEA_DEV', '').lower() in ('1', 'true', 'yes')
 # Populated once at process startup from the IEEE OUI CSV bundled in the image.
 OUI_DB = {}
 
+# Corrections on top of the IEEE registry, e.g. acquired companies whose
+# blocks still carry the old name.
+OUI_OVERRIDES = {
+    '40A36BA': 'Riedel Communications (Embrionix)',
+}
+
 
 def load_oui_db():
-    """Load the IEEE OUI database into OUI_DB. Safe to call if file is missing."""
+    """Load the IEEE registries into OUI_DB. Safe to call if file is missing.
+
+    The file may be a concatenation of the MA-L (6 hex digits), MA-M (7)
+    and MA-S (9) registry CSVs; all three share the same column layout,
+    and stray header rows fail the prefix-length check."""
     if not os.path.exists(OUI_CSV):
         print(f"OUI database not found at {OUI_CSV} - vendor lookup disabled")
         return
@@ -102,15 +112,17 @@ def load_oui_db():
                 if len(row) >= 3:
                     prefix = row[1].strip().upper()
                     vendor = row[2].strip()
-                    if len(prefix) == 6 and vendor:
+                    if len(prefix) in (6, 7, 9) and vendor:
                         OUI_DB[prefix] = vendor
+        OUI_DB.update(OUI_OVERRIDES)
         print(f"Loaded {len(OUI_DB)} OUI entries from {OUI_CSV}")
     except Exception as e:
         print(f"Error loading OUI database from {OUI_CSV}: {e}")
 
 
 def mac_to_vendor(mac):
-    """Resolve a MAC address to its vendor name via the OUI prefix.
+    """Resolve a MAC address to its vendor name, longest prefix first
+    (MA-S 36 bit, then MA-M 28 bit, then MA-L 24 bit).
     Accepts any common MAC notation (00:11:22:33:44:55, 00-11-22-..., 001122334455).
     Returns an empty string if unknown or input is invalid.
     """
@@ -119,7 +131,11 @@ def mac_to_vendor(mac):
     cleaned = ''.join(c for c in mac if c.isalnum()).upper()
     if len(cleaned) < 6:
         return ''
-    return OUI_DB.get(cleaned[:6], '')
+    for n in (9, 7, 6):
+        vendor = OUI_DB.get(cleaned[:n])
+        if vendor:
+            return vendor
+    return ''
 
 
 # Populate the lookup table at import time so it's ready before the first request.

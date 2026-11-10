@@ -29,17 +29,21 @@ RUN adduser -D -u 1000 kea 2>/dev/null || true && \
 # and to use raw sockets if the config requests raw socket type (CAP_NET_RAW).
 RUN setcap 'cap_net_bind_service,cap_net_raw=+ep' /usr/sbin/kea-dhcp4
 
-# IEEE OUI database for offline MAC-to-vendor lookup, baked into the image.
-# Try a fresh download first; standards-oui.ieee.org is unreliable from CI
-# runners, so fall back to the snapshot bundled in the repo rather than
-# failing the whole build over a data file.
+# IEEE registries (MA-L + MA-M + MA-S) for offline MAC-to-vendor lookup,
+# concatenated into one file and baked into the image. Try a fresh
+# download first; standards-oui.ieee.org is unreliable from CI runners,
+# so fall back to the snapshot bundled in the repo rather than failing
+# the whole build over a data file.
 COPY assets/oui.csv.gz /tmp/oui.csv.gz
 RUN mkdir -p /app && \
     apk add --no-cache --virtual .oui-deps curl && \
-    { curl -fsSL --retry 3 -o /app/oui.csv https://standards-oui.ieee.org/oui/oui.csv \
+    { { curl -fsSL --retry 3 -o /tmp/oui-l.csv https://standards-oui.ieee.org/oui/oui.csv && \
+        curl -fsSL --retry 3 -o /tmp/oui-m.csv https://standards-oui.ieee.org/oui28/mam.csv && \
+        curl -fsSL --retry 3 -o /tmp/oui-s.csv https://standards-oui.ieee.org/oui36/oui36.csv && \
+        cat /tmp/oui-l.csv /tmp/oui-m.csv /tmp/oui-s.csv > /app/oui.csv; } \
       || { echo "IEEE download failed, using bundled OUI snapshot"; \
            gunzip -c /tmp/oui.csv.gz > /app/oui.csv; }; } && \
-    rm /tmp/oui.csv.gz && \
+    rm -f /tmp/oui.csv.gz /tmp/oui-l.csv /tmp/oui-m.csv /tmp/oui-s.csv && \
     apk del .oui-deps
 
 # Copy application files
